@@ -1,0 +1,12 @@
+pipecat-ai>=1.17.0
+elevenlabs>=2.79.0
+google-genai>=3.6.1
+google-api-core>=2.44.0
+fastapi>=0.115.0
+uvicorn>=0.30.0
+websockets>=13.0
+python-dotenv>=1.0.0
+aiohttp>=3.10.0
+loguru>=0.7.0
+onnxruntime>=1.20.0
+soundfile>=0.13.0
