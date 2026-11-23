@@ -2,7 +2,6 @@
 tests/test_clinic.py - Automated Unit Tests for Clinic Tools
 """
 
-import pytest
 import asyncio
 from backend.data import (
     check_doctor_availability,
@@ -24,20 +23,22 @@ def test_check_availability():
     assert len(res["results"]) > 0
     assert "Dr. Arvind Rao" in res["results"][0]["doctor"]
 
-@pytest.mark.asyncio
-async def test_booking_and_cancellation():
-    test_phone = "9988776655"
-    res_book = await book_appointment(
-        patient_phone=test_phone,
-        doctor_name="Dr. Arvind Rao",
-        date="Tomorrow",
-        time_slot="10:00 AM",
-        patient_name="Test Patient",
-    )
-    assert res_book["status"] == "success"
-    assert res_book["patient_phone"] == test_phone
+def test_booking_and_cancellation():
+    async def _async_test():
+        test_phone = "9988776655"
+        res_book = await book_appointment(
+            patient_phone=test_phone,
+            doctor_name="Dr. Arvind Rao",
+            date="Tomorrow",
+            time_slot="10:00 AM",
+            patient_name="Test Patient",
+        )
+        assert res_book["status"] == "success"
+        assert res_book["patient_phone"] == test_phone
 
-    # Verify cancellation
-    res_cancel = await cancel_appointment(patient_phone=test_phone)
-    assert res_cancel["status"] == "success"
-    assert res_cancel["doctor"] == "Dr. Arvind Rao"
+        # Verify cancellation
+        res_cancel = await cancel_appointment(patient_phone=test_phone)
+        assert res_cancel["status"] == "success"
+        assert res_cancel["doctor"] == "Dr. Arvind Rao"
+
+    asyncio.run(_async_test())
