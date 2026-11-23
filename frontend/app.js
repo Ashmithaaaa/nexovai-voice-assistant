@@ -64,6 +64,8 @@ const DOM = {
   statAvailableSlots: document.getElementById('statAvailableSlots'),
   statAppointmentsCount: document.getElementById('statAppointmentsCount'),
   toastContainer: document.getElementById('toastContainer'),
+  phoneTextInput: document.getElementById('phoneTextInput'),
+  btnSendPhoneText: document.getElementById('btnSendPhoneText'),
 };
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initWebSocket();
   setupFilterPills();
   setupQuickPrompts();
+  setupTextInputBar();
 
   DOM.btnOpenCall.addEventListener('click', startPhoneCall);
   DOM.btnEndCall.addEventListener('click', endPhoneCall);
@@ -83,6 +86,38 @@ document.addEventListener('DOMContentLoaded', () => {
   DOM.btnMicCheck.addEventListener('click', testMicrophone);
   DOM.phoneHomeBar.addEventListener('click', endPhoneCall);
   DOM.btnResetData.addEventListener('click', resetDemoData);
+});
+
+function setupTextInputBar() {
+  function handleSend() {
+    if (!DOM.phoneTextInput) return;
+    const val = DOM.phoneTextInput.value.trim();
+    if (!val) return;
+
+    if (!AppState.callActive) {
+      showToast('Click "Try Voice Call" first to start the call session.', 'info');
+      return;
+    }
+
+    addTranscriptMessage('user', val, true);
+    if (AppState.ws && AppState.ws.readyState === WebSocket.OPEN) {
+      AppState.ws.send(JSON.stringify({ type: 'user_transcript', text: val }));
+    }
+    DOM.phoneTextInput.value = '';
+  }
+
+  if (DOM.btnSendPhoneText) {
+    DOM.btnSendPhoneText.addEventListener('click', handleSend);
+  }
+  if (DOM.phoneTextInput) {
+    DOM.phoneTextInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSend();
+      }
+    });
+  }
+}
 
   // Initialize Waveform Canvas
   initWaveformVisualizer();
@@ -434,14 +469,34 @@ function initSpeechRecognitionFallback() {
 
 function speakAgentFallback(text) {
   if (!AppState.speechSynth) return;
-  // If remote PCM audio is already playing from ElevenLabs, skip browser synth
   if (AppState.audioCtx && AppState.audioCtx.state === 'running' && AppState.isPlayingRemoteAudio) {
     return;
   }
   AppState.speechSynth.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1.05;
+  utterance.rate = 1.0;
   utterance.pitch = 1.0;
+
+  // Select clear, pleasant voice if available
+  const voices = AppState.speechSynth.getVoices();
+  const preferred = voices.find(v => v.lang.startsWith('en') && (
+    v.name.includes('Natural') || v.name.includes('Jenny') || v.name.includes('Samantha') || 
+    v.name.includes('Google US English') || v.name.includes('Zira') || v.name.includes('Female')
+  ));
+  if (preferred) utterance.voice = preferred;
+
+  utterance.onstart = () => {
+    updateCallStatus('speaking');
+    AppState.isAgentSpeaking = true;
+  };
+  utterance.onend = () => {
+    updateCallStatus('listening');
+    AppState.isAgentSpeaking = false;
+  };
+  utterance.onerror = () => {
+    AppState.isAgentSpeaking = false;
+  };
+
   AppState.speechSynth.speak(utterance);
 }
 
@@ -565,7 +620,12 @@ function initWaveformVisualizer() {
     }
 
     let dataArray = new Uint8Array(64);
-    if (AppState.analyser) {
+    if (AppState.isAgentSpeaking) {
+      // Dynamic pulsating waveform while receptionist is speaking
+      for (let i = 0; i < 64; i++) {
+        dataArray[i] = Math.abs(Math.sin(Date.now() * 0.008 + i * 0.25)) * 170 + 40;
+      }
+    } else if (AppState.analyser) {
       AppState.analyser.getByteFrequencyData(dataArray);
     } else {
       // Gentle synthetic pulse if analyser is preparing
