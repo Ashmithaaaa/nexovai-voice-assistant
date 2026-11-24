@@ -144,6 +144,7 @@ function initWebSocket() {
   AppState.ws.onopen = () => {
     console.log('[WebSocket] Connected successfully.');
     AppState.wsConnected = true;
+    updateServerBadge(true);
     addActivityLog('WS_CONNECT', 'Established real-time channel with Voice AI backend.');
   };
 
@@ -164,14 +165,35 @@ function initWebSocket() {
   };
 
   AppState.ws.onclose = () => {
-    console.warn('[WebSocket] Connection closed. Retrying in 3s...');
+    console.warn('[WebSocket] Connection closed. Retrying in 2s...');
     AppState.wsConnected = false;
-    setTimeout(initWebSocket, 3000);
+    updateServerBadge(false);
+    setTimeout(initWebSocket, 2000);
   };
 
   AppState.ws.onerror = (err) => {
     console.error('[WebSocket] Error:', err);
+    updateServerBadge(false);
   };
+}
+
+function updateServerBadge(online) {
+  const badge = document.getElementById('serverStatusBadge');
+  const pulse = document.getElementById('serverPulse');
+  const text = document.getElementById('serverStatusText');
+  if (!text || !pulse) return;
+
+  if (online) {
+    pulse.style.backgroundColor = 'var(--accent-emerald)';
+    pulse.style.boxShadow = '0 0 10px var(--accent-emerald)';
+    text.textContent = 'Server Online • Ready';
+    if (badge) badge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+  } else {
+    pulse.style.backgroundColor = 'var(--accent-rose)';
+    pulse.style.boxShadow = '0 0 10px var(--accent-rose)';
+    text.textContent = 'Server Offline (Run python server.py)';
+    if (badge) badge.style.borderColor = 'rgba(244, 63, 94, 0.4)';
+  }
 }
 
 function handleServerEvent(data) {
@@ -240,6 +262,11 @@ function handleToolEvent(event) {
 // ---------------------------------------------------------------------------
 async function startPhoneCall() {
   if (AppState.callActive) return;
+
+  if (!AppState.wsConnected) {
+    showToast('Cannot connect: Server is offline. Please run "python server.py" in VS Code terminal.', 'info');
+    return;
+  }
 
   // Show Phone Modal
   DOM.phoneModalBackdrop.classList.add('active');

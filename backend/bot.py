@@ -284,48 +284,56 @@ class Tap(FrameProcessor):
 
 
 # ---------------------------------------------------------------------------
-# 5. Cloud API Preflight Check
+# 5. Cloud API Preflight Check (Cached)
 # ---------------------------------------------------------------------------
+_cached_cloud_status: Optional[bool] = None
+
 async def check_cloud_apis(gemini_key: str, eleven_key: str) -> bool:
     """
     Validates whether the user's Gemini & ElevenLabs API keys have active quotas
-    and permissions. Returns False if quotas are exceeded or permissions missing.
+    and permissions. Caches result to avoid latency spikes on subsequent calls.
     """
+    global _cached_cloud_status
+    if _cached_cloud_status is not None:
+        return _cached_cloud_status
+
     if not gemini_key or not eleven_key or gemini_key.startswith("your_") or eleven_key.startswith("your_"):
+        _cached_cloud_status = False
         return False
 
-    try:
-        # Quick non-blocking test of Gemini
-        import google.genai as genai
-        client = genai.Client(api_key=gemini_key)
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-2.5-flash",
-            contents="test"
-        )
-        if not resp:
+    async def _test():
+        try:
+            import google.genai as genai
+            client = genai.Client(api_key=gemini_key)
+            resp = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-2.5-flash",
+                contents="test"
+            )
+            if not resp:
+                return False
+
+            from elevenlabs.client import ElevenLabs
+            el = ElevenLabs(api_key=eleven_key)
+            test_audio = await asyncio.to_thread(
+                el.text_to_speech.convert,
+                voice_id="21m00Tcm4TlvDq8ikWAM",
+                text="ok",
+                model_id="eleven_flash_v2_5"
+            )
+            next(test_audio, None)
+            return True
+        except Exception as e:
+            logger.info(f"[Preflight] Cloud API check note: {e}")
             return False
-    except Exception as e:
-        logger.info(f"[Preflight] Gemini API check notice: {e}")
-        return False
 
     try:
-        # Quick non-blocking test of ElevenLabs TTS
-        from elevenlabs.client import ElevenLabs
-        el = ElevenLabs(api_key=eleven_key)
-        test_audio = await asyncio.to_thread(
-            el.text_to_speech.convert,
-            voice_id="21m00Tcm4TlvDq8ikWAM",
-            text="ok",
-            model_id="eleven_flash_v2_5"
-        )
-        # Verify generator opens without 402 payment error
-        next(test_audio, None)
-    except Exception as e:
-        logger.info(f"[Preflight] ElevenLabs API check notice: {e}")
-        return False
+        # Strict 1.5 second timeout so user never experiences lag
+        _cached_cloud_status = await asyncio.wait_for(_test(), timeout=1.5)
+    except Exception:
+        _cached_cloud_status = False
 
-    return True
+    return _cached_cloud_status
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +520,17 @@ async def run_simulated_session(
                     continue
 
                 msg_type = msg.get("type")
+
+                if msg_type == "call_started":
+                    # Greet immediately when user initiates call
+                    await event_callback({"type": "state", "status": "speaking"})
+                    await event_callback({
+                        "type": "transcript",
+                        "role": "agent",
+                        "text": GREETING,
+                    })
+                    await event_callback({"type": "state", "status": "listening"})
+                    continue
 
                 if msg_type == "user_transcript":
                     user_text = msg.get("text", "").strip()
