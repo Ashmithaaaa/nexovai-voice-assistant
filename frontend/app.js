@@ -348,6 +348,14 @@ async function startPhoneCall() {
   DOM.callTimer.textContent = '00:00';
   AppState.callDurationSec = 0;
 
+  // Reset transcript viewport for fresh call
+  if (DOM.phoneTranscript) {
+    DOM.phoneTranscript.innerHTML = '';
+  }
+  if (DOM.phoneTicketCard) {
+    DOM.phoneTicketCard.style.display = 'none';
+  }
+
   // Play synthesized dual-tone telephone ringing sound
   playTelephoneRingSound();
 

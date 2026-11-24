@@ -70,6 +70,14 @@ async def on_data_changed(event_type: str, data: Dict[str, Any]):
 register_listener(on_data_changed)
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    """Return empty 204 for favicon to prevent 404 noise."""
+    from fastapi import Response
+    return Response(status_code=204)
+
+
+
 # ---------------------------------------------------------------------------
 # REST Endpoints
 # ---------------------------------------------------------------------------

@@ -14,7 +14,8 @@ from backend.data import (
 
 def test_clean_phone():
     assert clean_phone("9876543210") == "9876543210"
-    assert clean_phone("+91 (987) 654-3210") == "919876543210"
+    assert clean_phone("+91 (987) 654-3210") == "9876543210"
+    assert clean_phone("nine eight double seven six five four three two one") == "9877654321"
     assert clean_phone("invalid") == ""
 
 def test_check_availability():

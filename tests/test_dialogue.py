@@ -157,5 +157,51 @@ def test_specialty_matching_dermatology_and_others():
         assert "phone number" in reply6a.lower()
         assert "would you like to book one of these" not in reply6a.lower()
 
+        # Case 7: Cancellation flow with phone confirmation
+        state6 = {
+            "pending_action": None,
+            "pending_doc": "Dr. Priya Sharma",
+            "pending_specialty": "Dermatology",
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": GREETING,
+        }
+        reply7a = await handle_simulated_dialogue("I want to cancel my appointment", state6, dummy_callback)
+        assert "cancel" in reply7a.lower()
+        assert "phone number" in reply7a.lower()
+
+        reply7b = await handle_simulated_dialogue("my phone is 9876543210", state6, dummy_callback)
+        assert "cancel" in reply7b.lower()
+        assert "booking" not in reply7b.lower() # Must say cancel, NOT booking!
+        assert "9 8 7 6 5 4 3 2 1 0" in reply7b
+
+        # Case 8: Abort / "never mind"
+        state7 = {
+            "pending_action": "book",
+            "pending_doc": "Dr. Arvind Rao",
+            "pending_specialty": "Cardiology",
+            "pending_date": "Tomorrow",
+            "pending_slot": "10:00 AM",
+            "pending_phone": None,
+            "last_agent_prompt": "What is your phone number?",
+        }
+        reply8 = await handle_simulated_dialogue("never mind forget it", state7, dummy_callback)
+        assert "cleared" in reply8.lower()
+        assert state7["pending_action"] is None
+
+        # Case 9: Gratitude & Farewell
+        state8 = {
+            "pending_action": None,
+            "pending_doc": None,
+            "pending_specialty": None,
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": GREETING,
+        }
+        reply9 = await handle_simulated_dialogue("Thank you so much, bye!", state8, dummy_callback)
+        assert "welcome" in reply9.lower()
+
     asyncio.run(run())
 

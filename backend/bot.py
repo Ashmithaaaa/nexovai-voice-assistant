@@ -606,18 +606,9 @@ async def run_simulated_session(
         "pending_date": "Tomorrow",
         "pending_slot": None,
         "pending_phone": None,
+        "patient_name": "Caller",
         "last_agent_prompt": GREETING,
     }
-
-    # Initial greeting
-    await asyncio.sleep(0.3)
-    await event_callback({"type": "state", "status": "speaking"})
-    await event_callback({
-        "type": "transcript",
-        "role": "agent",
-        "text": GREETING,
-    })
-    await event_callback({"type": "state", "status": "listening"})
 
     try:
         while True:
@@ -631,7 +622,18 @@ async def run_simulated_session(
                 msg_type = msg.get("type")
 
                 if msg_type == "call_started":
-                    # Greet immediately when user initiates call
+                    # Reset state completely for new call session
+                    state.clear()
+                    state.update({
+                        "pending_action": None,
+                        "pending_doc": None,
+                        "pending_specialty": None,
+                        "pending_date": "Tomorrow",
+                        "pending_slot": None,
+                        "pending_phone": None,
+                        "patient_name": "Caller",
+                        "last_agent_prompt": GREETING,
+                    })
                     await event_callback({"type": "state", "status": "speaking"})
                     await event_callback({
                         "type": "transcript",
@@ -639,6 +641,21 @@ async def run_simulated_session(
                         "text": GREETING,
                     })
                     await event_callback({"type": "state", "status": "listening"})
+                    continue
+
+                elif msg_type == "call_ended":
+                    # Clear session state on call termination
+                    state.clear()
+                    state.update({
+                        "pending_action": None,
+                        "pending_doc": None,
+                        "pending_specialty": None,
+                        "pending_date": "Tomorrow",
+                        "pending_slot": None,
+                        "pending_phone": None,
+                        "patient_name": "Caller",
+                        "last_agent_prompt": GREETING,
+                    })
                     continue
 
                 if msg_type == "user_transcript":
@@ -702,6 +719,13 @@ async def handle_simulated_dialogue(
     if extracted_slot:
         state["pending_slot"] = extracted_slot
 
+    # Detect patient name if provided e.g. "My name is John" or "This is Rahul"
+    name_match = re.search(r"\b(?:my name is|i am|this is|call me)\s+([a-zA-Z]+)\b", text_lower)
+    if name_match:
+        cand = name_match.group(1).capitalize()
+        if cand.lower() not in ["doctor", "calling", "interested", "looking", "trying", "here", "ready"]:
+            state["patient_name"] = cand
+
     # -----------------------------------------------------------------------
     # 0. Check for "Repeat / Say Again / Pardon / What?"
     # -----------------------------------------------------------------------
@@ -737,6 +761,29 @@ async def handle_simulated_dialogue(
             return reply
 
     # -----------------------------------------------------------------------
+    # 0b. Abort / Clear Request Intent ("never mind", "forget it", "stop")
+    # -----------------------------------------------------------------------
+    is_abort = any(phrase in text_lower for phrase in [
+        "never mind", "nevermind", "forget it", "don't book", "dont book",
+        "stop", "abort", "leave it", "start over", "clear request"
+    ])
+    if is_abort:
+        state["pending_action"] = None
+        state["pending_phone"] = None
+        state["pending_slot"] = None
+        reply = "No problem at all, I have cleared that request. How else can I help you today? You can check availability, book an appointment, or cancel an existing one."
+        state["last_agent_prompt"] = reply
+        return reply
+
+    # -----------------------------------------------------------------------
+    # 0c. Polite Gratitude & Farewell Intent ("thank you", "thanks", "bye")
+    # -----------------------------------------------------------------------
+    if any(w in text_lower for w in ["thank you", "thanks", "thank u", "bye", "goodbye", "have a good day", "see you"]):
+        reply = "You're very welcome! Thank you for calling Aura Health Clinic. Take care and have a wonderful day!"
+        state["last_agent_prompt"] = reply
+        return reply
+
+    # -----------------------------------------------------------------------
     # 1. User confirmation of pending phone number (Strict confirmation rule)
     # -----------------------------------------------------------------------
     if state.get("pending_action") and state.get("pending_phone"):
@@ -759,13 +806,15 @@ async def handle_simulated_dialogue(
                     doctor_name=doc,
                     date=date,
                     time_slot=slot,
+                    patient_name=state.get("patient_name") or "Caller",
                 )
                 await event_callback({
                     "type": "tool_event",
                     "action": "book_appointment",
                     "details": res,
                 })
-                reply = f"Thank you! Your appointment with {doc} on {date} at {slot} is officially confirmed under phone number {phone}. We look forward to seeing you!"
+                patient_display = f" for {state.get('patient_name')}" if state.get("patient_name") and state.get("patient_name") != "Caller" else ""
+                reply = f"Thank you! Your appointment with {doc} on {date} at {slot} is officially confirmed{patient_display} under phone number {phone}. We look forward to seeing you!"
                 state["last_agent_prompt"] = reply
                 return reply
 
@@ -811,11 +860,15 @@ async def handle_simulated_dialogue(
         state["pending_action"] = state.get("pending_action") or "book"
         state["pending_phone"] = extracted_phone
         spaced_phone = " ".join(extracted_phone)
-        if state.get("pending_doc"):
+        if state.get("pending_action") == "cancel":
+            reply = f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct to cancel your appointment?"
+        elif state.get("pending_doc"):
             reply = f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your booking with {state['pending_doc']}?"
         else:
             action_name = "booking" if state["pending_action"] == "book" else "cancellation"
             reply = f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your {action_name}?"
+        state["last_agent_prompt"] = reply
+        return reply
         state["last_agent_prompt"] = reply
         return reply
 

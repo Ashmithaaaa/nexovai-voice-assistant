@@ -125,21 +125,49 @@ WORD_DIGITS = {
     "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "oh": "0",
 }
 
+MULTIPLIERS = {
+    "double": 2,
+    "triple": 3,
+}
+
 def clean_phone(phone_str: str) -> str:
-    """Normalize phone number to digits only, supporting both spoken words and numeric strings."""
+    """
+    Normalize phone number to digits only, supporting spoken words,
+    multipliers (e.g. 'double eight'), and national prefixes (+91, 0).
+    """
     if not phone_str:
         return ""
     import re
     tokens = str(phone_str).lower().split()
     converted = []
-    for token in tokens:
-        cleaned_t = re.sub(r"[^\w]", "", token)
+    i = 0
+    while i < len(tokens):
+        cleaned_t = re.sub(r"[^\w]", "", tokens[i])
+        if cleaned_t in MULTIPLIERS and i + 1 < len(tokens):
+            next_t = re.sub(r"[^\w]", "", tokens[i + 1])
+            count = MULTIPLIERS[cleaned_t]
+            digit = WORD_DIGITS.get(next_t, next_t if next_t.isdigit() else "")
+            if digit:
+                converted.extend([digit] * count)
+                i += 2
+                continue
         if cleaned_t in WORD_DIGITS:
             converted.append(WORD_DIGITS[cleaned_t])
         else:
-            converted.append(token)
+            converted.append(tokens[i])
+        i += 1
+
     text = " ".join(converted)
-    return "".join(c for c in text if c.isdigit())
+    digits = "".join(c for c in text if c.isdigit())
+
+    # If 12 digits starting with Indian country code 91, normalize to 10-digit mobile
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    # If 11 digits starting with trunk 0, normalize to 10-digit mobile
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+
+    return digits
 
 
 def get_doctors_data() -> List[Dict[str, Any]]:
