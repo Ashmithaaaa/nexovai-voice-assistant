@@ -61,3 +61,82 @@ def test_dialogue_repetition_and_clarification():
         assert state["pending_phone"] is None
 
     asyncio.run(run())
+
+
+def test_specialty_matching_dermatology_and_others():
+    async def run():
+        events = []
+        async def dummy_callback(evt):
+            events.append(evt)
+
+        # Case 1: "I want to consult an dematrology" -> MUST return Dr. Priya Sharma / Dermatology, NOT Dr. Arvind Rao!
+        state1 = {
+            "pending_action": None,
+            "pending_doc": None,
+            "pending_specialty": None,
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": GREETING,
+        }
+        reply1 = await handle_simulated_dialogue("i want to consult an dematrology", state1, dummy_callback)
+        assert "dr. priya sharma" in reply1.lower()
+        assert "dermatology" in reply1.lower()
+        assert "dr. arvind rao" not in reply1.lower()
+        assert "cardiology" not in reply1.lower()
+
+        # Case 2: Booking dermatology
+        reply2 = await handle_simulated_dialogue("I want to book tomorrow at 11:15 AM", state1, dummy_callback)
+        assert "dr. priya sharma" in reply2.lower()
+        assert "11:15 am" in reply2.lower()
+        assert "phone number" in reply2.lower()
+
+        # Case 3: Asking about Orthopedics / joint pain
+        state2 = {
+            "pending_action": None,
+            "pending_doc": None,
+            "pending_specialty": None,
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": GREETING,
+        }
+        reply3 = await handle_simulated_dialogue("can i see an orthopedic doctor for knee pain?", state2, dummy_callback)
+        assert "dr. rohan mehta" in reply3.lower()
+        assert "orthopedics" in reply3.lower()
+
+        # Case 4: Asking about General Medicine / fever
+        state3 = {
+            "pending_action": None,
+            "pending_doc": None,
+            "pending_specialty": None,
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": GREETING,
+        }
+        reply4 = await handle_simulated_dialogue("i have a fever and need a general physician", state3, dummy_callback)
+        assert "dr. ananya iyer" in reply4.lower()
+        assert "general medicine" in reply4.lower()
+
+        # Case 5: Direct slot booking with phone number and confirmation for Dermatology
+        state4 = {
+            "pending_action": None,
+            "pending_doc": None,
+            "pending_specialty": None,
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": GREETING,
+        }
+        reply5a = await handle_simulated_dialogue("I'd like to book Dr. Priya Sharma for Tomorrow at 11:15 AM. My phone number is 9876543210.", state4, dummy_callback)
+        assert "9 8 7 6 5 4 3 2 1 0" in reply5a
+        assert "correct" in reply5a.lower()
+        assert state4["pending_doc"] == "Dr. Priya Sharma"
+
+        reply5b = await handle_simulated_dialogue("yes, that's right", state4, dummy_callback)
+        assert "confirmed" in reply5b.lower()
+        assert "dr. priya sharma" in reply5b.lower()
+
+    asyncio.run(run())
+

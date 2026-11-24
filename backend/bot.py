@@ -78,37 +78,92 @@ You speak naturally over a phone call. Keep your answers brief, empathetic, and 
 
 CLINIC INFORMATION:
 - Clinic: Aura Health & Specialty Clinic
-- Available Doctors:
-  * Dr. Arvind Rao (Cardiology)
-  * Dr. Priya Sharma (Dermatology)
-  * Dr. Rohan Mehta (Orthopedics)
-  * Dr. Ananya Iyer (General Medicine)
+- Available Doctors & Specialties:
+  * Dr. Arvind Rao (Cardiology) - Heart, blood pressure, chest health
+  * Dr. Priya Sharma (Dermatology) - Skin, acne, rash, hair, aesthetics
+  * Dr. Rohan Mehta (Orthopedics) - Bones, joints, spine, knee, sports injury
+  * Dr. Ananya Iyer (General Medicine) - Internal medicine, fever, cold, general checkups
 
 CRITICAL RULES:
-1. IDENTIFICATION:
+1. SPECIALTY MATCHING & ROUTING:
+   - When the caller mentions a specialty (e.g. "dermatology", "skin", "heart", "ortho", "general physician") or asks to consult a specialist (e.g. "I want to consult in dermatology"), ALWAYS route to the matching specialty and doctor (e.g. Dr. Priya Sharma for Dermatology).
+   - NEVER default or redirect a dermatology or other specialty request to Cardiology or Dr. Arvind Rao.
+   - Always invoke `check_doctor_availability` with the caller's requested `specialty` or `doctor_name`.
+
+2. IDENTIFICATION:
    - The caller is identified ONLY by the phone number they say aloud. There is no login, OTP, or caller ID.
 
-2. AVAILABILITY CHECK:
-   - When the caller asks about availability (e.g. "Does Dr. Rao have anything tomorrow?"), immediately use the `check_doctor_availability` tool.
+3. AVAILABILITY CHECK:
+   - When the caller asks about availability or consultation, immediately use the `check_doctor_availability` tool.
    - Read the available slots clearly and offer them to the caller.
 
-3. APPOINTMENT BOOKING:
+4. APPOINTMENT BOOKING:
    - When the caller wants to book an appointment, ask for their phone number if you do not have it.
    - MANDATORY STEP: When the caller states their phone number, YOU MUST READ BACK THE NUMBER (e.g. "Just to confirm, I have your number as 9 8 7 6 5 4 3 2 1 0. Is that correct?").
    - ONLY after the caller explicitly confirms (e.g. "Yes", "Correct", "That's right"), call `book_appointment`.
    - Never book before the caller confirms the phone number.
 
-4. APPOINTMENT CANCELLATION:
+5. APPOINTMENT CANCELLATION:
    - When the caller wants to cancel, ask for their phone number.
    - MANDATORY STEP: READ BACK the phone number to confirm before calling `cancel_appointment`.
    - ONLY after the caller confirms, call `cancel_appointment`.
 
-5. NATURAL VOICE CONVERSATION:
+6. NATURAL VOICE CONVERSATION:
    - Speak naturally without bullet points, asterisks, or markdown symbols.
    - Be helpful, clear, and reassuring.
 """
 
 GREETING = "Hello! Thank you for calling Aura Health Clinic. I'm your AI receptionist. How can I help you today? You can check doctor availability, book an appointment, or cancel one."
+
+SPECIALTY_DIRECTORY = [
+    {
+        "doctor": "Dr. Priya Sharma",
+        "specialty": "Dermatology",
+        "aliases": [
+            "dermatology", "dematrology", "dermatologist", "dematologist", "dermatolgy", "derm", "derma",
+            "skin", "rash", "acne", "hair", "scalp", "eczema", "priya", "sharma", "dr sharma", "dr. sharma",
+            "sarah", "thomas", "dr thomas", "dr. thomas"
+        ],
+    },
+    {
+        "doctor": "Dr. Arvind Rao",
+        "specialty": "Cardiology",
+        "aliases": [
+            "cardiology", "cardiologist", "cardiac", "heart", "chest", "bp", "blood pressure",
+            "hypertension", "arvind", "rao", "dr rao", "dr. rao", "arjun", "patel", "dr patel", "dr. patel"
+        ],
+    },
+    {
+        "doctor": "Dr. Rohan Mehta",
+        "specialty": "Orthopedics",
+        "aliases": [
+            "orthopedics", "orthopedic", "ortho", "bone", "bones", "joint", "joints",
+            "spine", "knee", "back pain", "fracture", "rohan", "mehta", "dr mehta", "dr. mehta"
+        ],
+    },
+    {
+        "doctor": "Dr. Ananya Iyer",
+        "specialty": "General Medicine",
+        "aliases": [
+            "general medicine", "general physician", "physician", "general", "internal medicine",
+            "fever", "cold", "flu", "cough", "infection", "headache", "checkup", "general checkup",
+            "ananya", "iyer", "dr iyer", "dr. iyer", "meera", "shah", "dr shah", "dr. shah"
+        ],
+    },
+]
+
+def extract_doctor_and_specialty(text: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Extracts doctor name and specialty from user text, matching full names,
+    surnames, specialty names, and clinical symptom keywords.
+    """
+    text_lower = text.lower()
+    for entry in SPECIALTY_DIRECTORY:
+        for alias in entry["aliases"]:
+            if re.search(r"\b" + re.escape(alias) + r"\b", text_lower):
+                return entry["doctor"], entry["specialty"]
+    return None, None
+
 
 
 # ---------------------------------------------------------------------------
@@ -496,9 +551,10 @@ async def run_simulated_session(
     """
     state = {
         "pending_action": None,  # "book" or "cancel"
-        "pending_doc": "Dr. Arvind Rao",
+        "pending_doc": None,
+        "pending_specialty": None,
         "pending_date": "Tomorrow",
-        "pending_slot": "10:00 AM",
+        "pending_slot": None,
         "pending_phone": None,
         "last_agent_prompt": GREETING,
     }
@@ -574,6 +630,61 @@ async def handle_simulated_dialogue(
     extracted_phone = clean_phone(user_text)
 
     # -----------------------------------------------------------------------
+    # Early Extraction: Doctor, Specialty, Date, and Time Slot Mentions
+    # -----------------------------------------------------------------------
+    matched_doc, matched_spec = extract_doctor_and_specialty(text_lower)
+    if matched_doc:
+        state["pending_doc"] = matched_doc
+        state["pending_specialty"] = matched_spec
+
+    matched_date = None
+    if "tomorrow" in text_lower:
+        matched_date = "Tomorrow"
+        state["pending_date"] = "Tomorrow"
+    elif "thursday" in text_lower:
+        matched_date = "Thursday"
+        state["pending_date"] = "Thursday"
+    elif "friday" in text_lower:
+        matched_date = "Friday"
+        state["pending_date"] = "Friday"
+
+    time_match = re.search(r"\b(10(?::00)?\s*(?:am)?|11(?::15)?\s*(?:am)?|12(?::00)?\s*(?:pm)?|1(?::00)?\s*(?:pm)?|2(?::30)?\s*(?:pm)?|3(?::00)?\s*(?:pm)?|4(?::00)?\s*(?:pm)?|5(?::00)?\s*(?:pm)?|first slot|second slot|third slot)\b", text_lower)
+    if time_match:
+        target_doc = state.get("pending_doc") or "Dr. Arvind Rao"
+        if "first slot" in text_lower or "first one" in text_lower:
+            res = check_doctor_availability(doctor_name=target_doc)
+            if res["status"] == "success" and res["results"] and res["results"][0]["available_slots"]:
+                first_s = res["results"][0]["available_slots"][0]
+                if " at " in first_s:
+                    parts = first_s.split(" at ")
+                    state["pending_date"] = parts[0]
+                    state["pending_slot"] = parts[1]
+        elif "second slot" in text_lower or "second one" in text_lower:
+            res = check_doctor_availability(doctor_name=target_doc)
+            if res["status"] == "success" and res["results"] and len(res["results"][0]["available_slots"]) > 1:
+                sec_s = res["results"][0]["available_slots"][1]
+                if " at " in sec_s:
+                    parts = sec_s.split(" at ")
+                    state["pending_date"] = parts[0]
+                    state["pending_slot"] = parts[1]
+        elif "10" in text_lower:
+            state["pending_slot"] = "10:00 AM"
+        elif "11:15" in text_lower or "11" in text_lower:
+            state["pending_slot"] = "11:15 AM"
+        elif "12" in text_lower:
+            state["pending_slot"] = "12:00 PM"
+        elif "1" in text_lower and not "11" in text_lower:
+            state["pending_slot"] = "01:00 PM"
+        elif "2:30" in text_lower or "2" in text_lower:
+            state["pending_slot"] = "02:30 PM"
+        elif "3" in text_lower:
+            state["pending_slot"] = "03:00 PM"
+        elif "4" in text_lower:
+            state["pending_slot"] = "04:00 PM"
+        elif "5" in text_lower:
+            state["pending_slot"] = "05:00 PM"
+
+    # -----------------------------------------------------------------------
     # 0. Check for "Repeat / Say Again / Pardon / What?"
     # -----------------------------------------------------------------------
     is_repeat = any(phrase in text_lower for phrase in [
@@ -589,7 +700,10 @@ async def handle_simulated_dialogue(
             state["last_agent_prompt"] = reply
             return reply
         elif state.get("pending_action") == "book":
-            reply = f"Certainly! I was asking for your phone number so I can book your slot with {state['pending_doc']} on {state['pending_date']} at {state['pending_slot']}. Could you please say your phone number?"
+            doc_str = state.get("pending_doc") or "your doctor"
+            date_str = state.get("pending_date") or "Tomorrow"
+            slot_str = state.get("pending_slot") or "your selected time"
+            reply = f"Certainly! I was asking for your phone number so I can book your slot with {doc_str} on {date_str} at {slot_str}. Could you please say your phone number?"
             state["last_agent_prompt"] = reply
             return reply
         elif state.get("pending_action") == "cancel":
@@ -607,16 +721,16 @@ async def handle_simulated_dialogue(
     # -----------------------------------------------------------------------
     # 1. User confirmation of pending phone number (Strict confirmation rule)
     # -----------------------------------------------------------------------
-    if state["pending_action"] and state["pending_phone"]:
+    if state.get("pending_action") and state.get("pending_phone"):
         is_yes = any(w in text_lower for w in ["yes", "correct", "right", "confirm", "yeah", "yep", "sure", "that's right", "fine", "ok", "proceed", "yup", "that is right", "it is correct"])
         is_no = any(w in text_lower for w in ["no", "wrong", "incorrect", "nope", "change", "not right", "cancel", "that's wrong", "different number"])
 
         if is_yes:
             action = state["pending_action"]
             phone = state["pending_phone"]
-            doc = state["pending_doc"]
-            date = state["pending_date"]
-            slot = state["pending_slot"]
+            doc = state.get("pending_doc") or "Dr. Arvind Rao"
+            date = state.get("pending_date") or "Tomorrow"
+            slot = state.get("pending_slot") or "10:00 AM"
 
             state["pending_action"] = None
             state["pending_phone"] = None
@@ -673,14 +787,17 @@ async def handle_simulated_dialogue(
                 return reply
 
     # -----------------------------------------------------------------------
-    # 2. Check for Phone Number input when an action is already in progress OR when digits are provided
+    # 2. Check for Phone Number input when digits are provided
     # -----------------------------------------------------------------------
     if len(extracted_phone) >= 7:
-        state["pending_action"] = state["pending_action"] or "book"
+        state["pending_action"] = state.get("pending_action") or "book"
         state["pending_phone"] = extracted_phone
         spaced_phone = " ".join(extracted_phone)
-        action_name = "booking" if state["pending_action"] == "book" else "cancellation"
-        reply = f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your {action_name}?"
+        if state.get("pending_doc"):
+            reply = f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your booking with {state['pending_doc']}?"
+        else:
+            action_name = "booking" if state["pending_action"] == "book" else "cancellation"
+            reply = f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your {action_name}?"
         state["last_agent_prompt"] = reply
         return reply
 
@@ -694,88 +811,80 @@ async def handle_simulated_dialogue(
         return reply
 
     # -----------------------------------------------------------------------
-    # 4. Intent: Check Doctor Availability
+    # 4. Intent: Availability / Consultation Query
     # -----------------------------------------------------------------------
-    is_availability_query = any(w in text_lower for w in [
-        "available", "availability", "slots", "free", "anything tomorrow",
-        "have anything", "when is", "what time", "openings"
-    ]) and not any(w in text_lower for w in ["book", "reserve", "confirm"])
+    availability_triggers = [
+        "available", "availability", "slots", "slot", "free", "anything tomorrow",
+        "have anything", "when is", "what time", "openings", "consult", "consultation",
+        "consult an", "consult a", "see a", "see the", "check slots", "looking for",
+        "need a", "want to consult", "want a consultation", "is there a", "do you have"
+    ]
+    is_consult_or_availability = any(phrase in text_lower for phrase in availability_triggers)
 
-    if is_availability_query:
-        doc_name = None
-        for doc in get_doctors_data():
-            names = doc["name"].lower().replace("dr.", "").split()
-            if any(n in text_lower for n in names):
-                doc_name = doc["name"]
-                state["pending_doc"] = doc["name"]
-                break
+    # Booking triggers without time slot specified are also availability queries first
+    explicit_booking_words = [
+        "book", "booking", "reserve", "take the", "schedule", "schedule an appointment",
+        "appointment with", "want to book", "book dr", "book an appointment"
+    ]
+    has_explicit_booking = any(w in text_lower for w in explicit_booking_words)
 
-        res = check_doctor_availability(doctor_name=doc_name)
+    if (is_consult_or_availability or (has_explicit_booking and not time_match)) and not any(w in text_lower for w in ["confirm", "proceed"]):
+        # If user explicitly mentioned doctor or specialty, or we have one pending
+        if matched_doc or matched_spec or state.get("pending_doc"):
+            target_doc = matched_doc or state.get("pending_doc")
+            target_spec = matched_spec or state.get("pending_specialty")
+            res = check_doctor_availability(doctor_name=target_doc, specialty=target_spec, date=matched_date)
+            await event_callback({
+                "type": "tool_event",
+                "action": "check_doctor_availability",
+                "details": res,
+            })
+
+            if res["status"] == "success" and res["results"]:
+                first_doc = res["results"][0]
+                slots = first_doc["available_slots"][:3]
+                slots_str = ", ".join(slots)
+                state["pending_doc"] = first_doc["doctor"]
+                state["pending_specialty"] = first_doc["specialty"]
+                reply = f"{first_doc['doctor']} in {first_doc['specialty']} has the following slots available: {slots_str}. Would you like to book one of these?"
+            else:
+                target = target_spec or target_doc or "your requested department"
+                reply = f"I'm sorry, we don't have open slots for {target} on {matched_date or 'that day'}. Would you like to check another day like Tomorrow or Thursday?"
+            state["last_agent_prompt"] = reply
+            return reply
+
+        # If neither doctor nor specialty was mentioned, but user asked for availability/consultation
+        res = check_doctor_availability(date=matched_date)
         await event_callback({
             "type": "tool_event",
             "action": "check_doctor_availability",
             "details": res,
         })
-
-        if res["status"] == "success" and res["results"]:
-            first_doc = res["results"][0]
-            slots = first_doc["available_slots"][:3]
-            slots_str = ", ".join(slots)
-            reply = f"{first_doc['doctor']} in {first_doc['specialty']} has the following slots available: {slots_str}. Would you like to book one of these?"
-        else:
-            reply = "Our clinic specialists, including Dr. Rao in Cardiology and Dr. Sharma in Dermatology, have open consultation slots for Tomorrow and Thursday. Which doctor would you like to see?"
+        reply = "Our clinic specialists include Dr. Arvind Rao in Cardiology, Dr. Priya Sharma in Dermatology, Dr. Rohan Mehta in Orthopedics, and Dr. Ananya Iyer in General Medicine. Which specialty or doctor would you like to consult?"
         state["last_agent_prompt"] = reply
         return reply
 
     # -----------------------------------------------------------------------
     # 5. Intent: Specific Booking Intent or Time Slot Selection
     # -----------------------------------------------------------------------
-    explicit_booking_words = [
-        "book", "booking", "reserve", "take the", "schedule an appointment",
-        "appointment with", "want to book", "book dr", "book an appointment"
-    ]
-    has_explicit_booking = any(w in text_lower for w in explicit_booking_words)
-
-    # Detect specific time mentions: "10 am", "10:00", "2:30", "first slot", etc.
-    time_match = re.search(r"\b(10(?::00)?\s*(?:am)?|11(?::15)?\s*(?:am)?|12(?::00)?\s*(?:pm)?|1(?::00)?\s*(?:pm)?|2(?::30)?\s*(?:pm)?|3(?::00)?\s*(?:pm)?|4(?::00)?\s*(?:pm)?|5(?::00)?\s*(?:pm)?|first slot|second slot|third slot)\b", text_lower)
-
     if has_explicit_booking or time_match:
         state["pending_action"] = "book"
 
-        # Update Doctor if explicitly mentioned
-        for doc in get_doctors_data():
-            names = doc["name"].lower().replace("dr.", "").split()
-            if any(n in text_lower for n in names):
-                state["pending_doc"] = doc["name"]
-                break
+        target_doc = state.get("pending_doc") or "Dr. Arvind Rao"
+        if not state.get("pending_slot"):
+            res = check_doctor_availability(doctor_name=target_doc)
+            if res["status"] == "success" and res["results"] and res["results"][0]["available_slots"]:
+                first_s = res["results"][0]["available_slots"][0]
+                if " at " in first_s:
+                    parts = first_s.split(" at ")
+                    state["pending_date"] = parts[0]
+                    state["pending_slot"] = parts[1]
 
-        # Update Date
-        if "tomorrow" in text_lower:
-            state["pending_date"] = "Tomorrow"
-        elif "thursday" in text_lower:
-            state["pending_date"] = "Thursday"
-        elif "friday" in text_lower:
-            state["pending_date"] = "Friday"
+        doc_display = state.get("pending_doc") or "Dr. Arvind Rao"
+        date_display = state.get("pending_date") or "Tomorrow"
+        slot_display = state.get("pending_slot") or "10:00 AM"
 
-        # Update Time Slot
-        if "10" in text_lower or "first" in text_lower:
-            state["pending_slot"] = "10:00 AM"
-        elif "2:30" in text_lower or "2" in text_lower or "second" in text_lower:
-            state["pending_slot"] = "02:30 PM"
-        elif "4" in text_lower:
-            state["pending_slot"] = "04:00 PM"
-        elif "11:15" in text_lower or "11" in text_lower:
-            state["pending_slot"] = "11:15 AM"
-        elif "3" in text_lower:
-            state["pending_slot"] = "03:00 PM"
-        elif "1" in text_lower:
-            state["pending_slot"] = "01:00 PM"
-        elif "12" in text_lower:
-            state["pending_slot"] = "12:00 PM"
-        elif "5" in text_lower:
-            state["pending_slot"] = "05:00 PM"
-
-        reply = f"I would be glad to book that slot with {state['pending_doc']} on {state['pending_date']} at {state['pending_slot']}. What is your phone number to confirm the booking?"
+        reply = f"I would be glad to book that slot with {doc_display} on {date_display} at {slot_display}. What is your phone number to confirm the booking?"
         state["last_agent_prompt"] = reply
         return reply
 
@@ -783,7 +892,8 @@ async def handle_simulated_dialogue(
     # 6. If currently waiting for phone number and user said something without digits
     # -----------------------------------------------------------------------
     if state.get("pending_action") == "book" and not state.get("pending_phone"):
-        reply = f"I didn't quite catch your phone number. Could you please say your 10-digit phone number so I can book your appointment with {state['pending_doc']}?"
+        doc_display = state.get("pending_doc") or "your doctor"
+        reply = f"I didn't quite catch your phone number. Could you please say your 10-digit phone number so I can book your appointment with {doc_display}?"
         state["last_agent_prompt"] = reply
         return reply
 
