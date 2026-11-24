@@ -75,10 +75,14 @@ document.addEventListener('DOMContentLoaded', () => {
   updateClock();
   setInterval(updateClock, 10000);
 
+  // Load clinic data immediately via REST
+  loadInitialData();
+
   initWebSocket();
   setupFilterPills();
   setupQuickPrompts();
   setupTextInputBar();
+  initWaveformVisualizer();
 
   DOM.btnOpenCall.addEventListener('click', startPhoneCall);
   DOM.btnEndCall.addEventListener('click', endPhoneCall);
@@ -87,6 +91,28 @@ document.addEventListener('DOMContentLoaded', () => {
   DOM.phoneHomeBar.addEventListener('click', endPhoneCall);
   DOM.btnResetData.addEventListener('click', resetDemoData);
 });
+
+async function loadInitialData() {
+  try {
+    const [docsRes, aptsRes] = await Promise.all([
+      fetch('/api/doctors'),
+      fetch('/api/appointments')
+    ]);
+    const docsData = await docsRes.json();
+    const aptsData = await aptsRes.json();
+    if (docsData && docsData.doctors) {
+      AppState.doctors = docsData.doctors;
+      renderDoctors();
+    }
+    if (aptsData && aptsData.appointments) {
+      AppState.appointments = aptsData.appointments;
+      renderAppointments();
+    }
+    updateStatsCounters();
+  } catch (e) {
+    console.warn('[Data] Initial REST load notice:', e);
+  }
+}
 
 function setupTextInputBar() {
   function handleSend() {
@@ -118,10 +144,6 @@ function setupTextInputBar() {
     });
   }
 }
-
-  // Initialize Waveform Canvas
-  initWaveformVisualizer();
-});
 
 function updateClock() {
   const now = new Date();
