@@ -162,6 +162,12 @@ function setupTextInputBar() {
       return;
     }
 
+    if (turnSilenceTimer) {
+      clearTimeout(turnSilenceTimer);
+      turnSilenceTimer = null;
+    }
+    turnSpeechBuffer = '';
+
     addTranscriptMessage('user', val, true);
     if (AppState.ws && AppState.ws.readyState === WebSocket.OPEN) {
       AppState.ws.send(JSON.stringify({ type: 'user_transcript', text: val }));
@@ -373,6 +379,12 @@ async function startPhoneCall() {
 function endPhoneCall() {
   if (!AppState.callActive && !DOM.phoneModalBackdrop.classList.contains('active')) return;
 
+  if (turnSilenceTimer) {
+    clearTimeout(turnSilenceTimer);
+    turnSilenceTimer = null;
+  }
+  turnSpeechBuffer = '';
+
   playDisconnectTone();
   AppState.callActive = false;
 
@@ -516,8 +528,38 @@ function testMicrophone() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Speech Recognition & Synthesis Fallbacks
+// 5. Speech Recognition & Synthesis Fallbacks (With Turn Buffer & Barge-In)
 // ---------------------------------------------------------------------------
+let turnSpeechBuffer = '';
+let turnSilenceTimer = null;
+const TURN_SILENCE_DELAY_MS = 1300; // 1.3s comfortable pause window for natural human speech
+
+function commitUserTurn() {
+  if (turnSilenceTimer) {
+    clearTimeout(turnSilenceTimer);
+    turnSilenceTimer = null;
+  }
+  const fullUtterance = turnSpeechBuffer.trim();
+  turnSpeechBuffer = '';
+
+  if (!fullUtterance || fullUtterance.length < 2) return;
+
+  const lower = fullUtterance.toLowerCase();
+  if (['uh', 'um', 'ah', 'er', 'hmm', 'oh'].includes(lower)) {
+    return;
+  }
+
+  addTranscriptMessage('user', fullUtterance, true);
+  updateCallStatus('thinking');
+
+  if (AppState.ws && AppState.ws.readyState === WebSocket.OPEN) {
+    AppState.ws.send(JSON.stringify({
+      type: 'user_transcript',
+      text: fullUtterance,
+    }));
+  }
+}
+
 function initSpeechRecognitionFallback() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) return;
@@ -532,40 +574,46 @@ function initSpeechRecognitionFallback() {
   AppState.recognition.lang = 'en-US';
 
   AppState.recognition.onresult = (event) => {
-    // Ignore microphone feedback while receptionist is actively speaking
-    if (AppState.isAgentSpeaking) return;
-
-    let finalTranscript = '';
-    let interimTranscript = '';
+    let finalChunk = '';
+    let interimChunk = '';
 
     for (let i = event.resultIndex; i < event.results.length; ++i) {
       if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript;
+        finalChunk += event.results[i][0].transcript;
       } else {
-        interimTranscript += event.results[i][0].transcript;
+        interimChunk += event.results[i][0].transcript;
       }
     }
 
-    const cleaned = finalTranscript.trim();
-    if (cleaned) {
-      // Filter out isolated mic clicks, breath noise, or short fillers
-      const lower = cleaned.toLowerCase();
-      if (cleaned.length < 2 || ['uh', 'um', 'ah', 'er', 'hmm', 'oh'].includes(lower)) {
+    const cleanedFinal = finalChunk.trim();
+    const cleanedInterim = interimChunk.trim();
+
+    // 1. Barge-In: If receptionist is speaking and caller starts talking, stop receptionist immediately
+    if (AppState.isAgentSpeaking) {
+      if (cleanedFinal.length > 1 || cleanedInterim.length > 1) {
+        if (AppState.speechSynth) AppState.speechSynth.cancel();
+        AppState.isAgentSpeaking = false;
+        AppState.isPlayingRemoteAudio = false;
+        updateCallStatus('listening');
+      } else {
         return;
       }
+    }
 
-      addTranscriptMessage('user', cleaned, true);
-      updateCallStatus('thinking');
-      // Forward user text to WebSocket backend
-      if (AppState.ws && AppState.ws.readyState === WebSocket.OPEN) {
-        AppState.ws.send(JSON.stringify({
-          type: 'user_transcript',
-          text: cleaned,
-        }));
-      }
-    } else if (interimTranscript.trim()) {
-      addTranscriptMessage('user', interimTranscript.trim(), false);
+    // 2. Accumulate final speech chunk into current turn buffer
+    if (cleanedFinal) {
+      turnSpeechBuffer = (turnSpeechBuffer + ' ' + cleanedFinal).trim();
+    }
+
+    // 3. Live visual feedback for interim speech
+    const currentLiveText = (turnSpeechBuffer + (cleanedInterim ? ' ' + cleanedInterim : '')).trim();
+    if (currentLiveText) {
+      addTranscriptMessage('user', currentLiveText, false);
       updateCallStatus('listening');
+
+      // 4. Reset silence timer: wait 1.3 seconds of silence before committing turn to Aura
+      if (turnSilenceTimer) clearTimeout(turnSilenceTimer);
+      turnSilenceTimer = setTimeout(commitUserTurn, TURN_SILENCE_DELAY_MS);
     }
   };
 
@@ -1055,6 +1103,12 @@ function setupQuickPrompts() {
     chip.addEventListener('click', () => {
       const text = chip.getAttribute('data-text');
       if (text && AppState.callActive) {
+        if (turnSilenceTimer) {
+          clearTimeout(turnSilenceTimer);
+          turnSilenceTimer = null;
+        }
+        turnSpeechBuffer = '';
+
         addTranscriptMessage('user', text, true);
         if (AppState.ws && AppState.ws.readyState === WebSocket.OPEN) {
           AppState.ws.send(JSON.stringify({ type: 'user_transcript', text: text }));

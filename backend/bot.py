@@ -164,6 +164,56 @@ def extract_doctor_and_specialty(text: str) -> tuple[Optional[str], Optional[str
                 return entry["doctor"], entry["specialty"]
     return None, None
 
+TIME_PATTERNS = [
+    # Explicit minute patterns FIRST (so 11:15 matches before 11:00)
+    (r"\b(?:0?9[:.]30(?:\s*(?:am|a\.m\.))?|nine\s*thirty)\b", "09:30 AM"),
+    (r"\b(?:10[:.]30(?:\s*(?:am|a\.m\.))?|ten\s*thirty)\b", "10:30 AM"),
+    (r"\b(?:11[:.]15(?:\s*(?:am|a\.m\.))?|eleven\s*fifteen)\b", "11:15 AM"),
+    (r"\b(?:11[:.]30(?:\s*(?:am|a\.m\.))?|eleven\s*thirty)\b", "11:30 AM"),
+    (r"\b(?:(?:0?1|1)[:.]30(?:\s*(?:pm|p\.m\.))?|one\s*thirty)\b", "01:30 PM"),
+    (r"\b(?:(?:0?2|2)[:.]30(?:\s*(?:pm|p\.m\.))?|two\s*thirty)\b", "02:30 PM"),
+    (r"\b(?:(?:0?4|4)[:.]30(?:\s*(?:pm|p\.m\.))?|four\s*thirty)\b", "04:30 PM"),
+
+    # Plain hour patterns
+    (r"\b(?:0?9(?::00|\.00)?\s*(?:am|a\.m\.)|nine\s*am)\b", "09:30 AM"),
+    (r"\b(?:10(?::00|\.00)?(?:\s*(?:am|a\.m\.))?|ten(?:\s*am)?)\b", "10:00 AM"),
+    (r"\b(?:11(?::00|\.00)?(?:\s*(?:am|a\.m\.))?|eleven(?:\s*am)?)\b", "11:00 AM"),
+    (r"\b(?:12(?::00|\.00)?(?:\s*(?:pm|p\.m\.))?|noon|twelve(?:\s*pm)?)\b", "12:00 PM"),
+    (r"\b(?:(?:0?1|1)(?::00|\.00)?\s*(?:pm|p\.m\.)|one\s*pm)\b", "01:00 PM"),
+    (r"\b(?:(?:0?2|2)(?::00|\.00)?\s*(?:pm|p\.m\.)|two\s*pm)\b", "02:00 PM"),
+    (r"\b(?:(?:0?3|3)(?::00|\.00)?(?:\s*(?:pm|p\.m\.))?|three(?:\s*pm)?)\b", "03:00 PM"),
+    (r"\b(?:(?:0?4|4)(?::00|\.00)?(?:\s*(?:pm|p\.m\.))?|four(?:\s*pm)?)\b", "04:00 PM"),
+    (r"\b(?:(?:0?5|5)(?::00|\.00)?(?:\s*(?:pm|p\.m\.))?|five(?:\s*pm)?)\b", "05:00 PM"),
+]
+
+def extract_time_slot(text: str, doctor_name: Optional[str] = None) -> Optional[str]:
+    """Extracts a standardized clinic time slot from user speech."""
+    t_clean = text.lower().replace("a.m.", "am").replace("p.m.", "pm")
+
+    if "first slot" in t_clean or "first one" in t_clean:
+        if doctor_name:
+            res = check_doctor_availability(doctor_name=doctor_name)
+            if res.get("status") == "success" and res.get("results") and res["results"][0]["available_slots"]:
+                first_s = res["results"][0]["available_slots"][0]
+                if " at " in first_s:
+                    return first_s.split(" at ")[1]
+        return "10:00 AM"
+
+    if "second slot" in t_clean or "second one" in t_clean:
+        if doctor_name:
+            res = check_doctor_availability(doctor_name=doctor_name)
+            if res.get("status") == "success" and res.get("results") and len(res["results"][0]["available_slots"]) > 1:
+                sec_s = res["results"][0]["available_slots"][1]
+                if " at " in sec_s:
+                    return sec_s.split(" at ")[1]
+        return "02:30 PM"
+
+    for pattern, slot_val in TIME_PATTERNS:
+        if re.search(pattern, t_clean):
+            return slot_val
+    return None
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -648,41 +698,9 @@ async def handle_simulated_dialogue(
         matched_date = "Friday"
         state["pending_date"] = "Friday"
 
-    time_match = re.search(r"\b(10(?::00)?\s*(?:am)?|11(?::15)?\s*(?:am)?|12(?::00)?\s*(?:pm)?|1(?::00)?\s*(?:pm)?|2(?::30)?\s*(?:pm)?|3(?::00)?\s*(?:pm)?|4(?::00)?\s*(?:pm)?|5(?::00)?\s*(?:pm)?|first slot|second slot|third slot)\b", text_lower)
-    if time_match:
-        target_doc = state.get("pending_doc") or "Dr. Arvind Rao"
-        if "first slot" in text_lower or "first one" in text_lower:
-            res = check_doctor_availability(doctor_name=target_doc)
-            if res["status"] == "success" and res["results"] and res["results"][0]["available_slots"]:
-                first_s = res["results"][0]["available_slots"][0]
-                if " at " in first_s:
-                    parts = first_s.split(" at ")
-                    state["pending_date"] = parts[0]
-                    state["pending_slot"] = parts[1]
-        elif "second slot" in text_lower or "second one" in text_lower:
-            res = check_doctor_availability(doctor_name=target_doc)
-            if res["status"] == "success" and res["results"] and len(res["results"][0]["available_slots"]) > 1:
-                sec_s = res["results"][0]["available_slots"][1]
-                if " at " in sec_s:
-                    parts = sec_s.split(" at ")
-                    state["pending_date"] = parts[0]
-                    state["pending_slot"] = parts[1]
-        elif "10" in text_lower:
-            state["pending_slot"] = "10:00 AM"
-        elif "11:15" in text_lower or "11" in text_lower:
-            state["pending_slot"] = "11:15 AM"
-        elif "12" in text_lower:
-            state["pending_slot"] = "12:00 PM"
-        elif "1" in text_lower and not "11" in text_lower:
-            state["pending_slot"] = "01:00 PM"
-        elif "2:30" in text_lower or "2" in text_lower:
-            state["pending_slot"] = "02:30 PM"
-        elif "3" in text_lower:
-            state["pending_slot"] = "03:00 PM"
-        elif "4" in text_lower:
-            state["pending_slot"] = "04:00 PM"
-        elif "5" in text_lower:
-            state["pending_slot"] = "05:00 PM"
+    extracted_slot = extract_time_slot(text_lower, doctor_name=state.get("pending_doc"))
+    if extracted_slot:
+        state["pending_slot"] = extracted_slot
 
     # -----------------------------------------------------------------------
     # 0. Check for "Repeat / Say Again / Pardon / What?"
@@ -824,11 +842,12 @@ async def handle_simulated_dialogue(
     # Booking triggers without time slot specified are also availability queries first
     explicit_booking_words = [
         "book", "booking", "reserve", "take the", "schedule", "schedule an appointment",
-        "appointment with", "want to book", "book dr", "book an appointment"
+        "appointment with", "want to book", "book dr", "book an appointment", "yes book",
+        "i want", "i'd like", "i would like", "take slot", "confirm slot"
     ]
     has_explicit_booking = any(w in text_lower for w in explicit_booking_words)
 
-    if (is_consult_or_availability or (has_explicit_booking and not time_match)) and not any(w in text_lower for w in ["confirm", "proceed"]):
+    if (is_consult_or_availability or (has_explicit_booking and not extracted_slot)) and not any(w in text_lower for w in ["confirm", "proceed"]):
         # If user explicitly mentioned doctor or specialty, or we have one pending
         if matched_doc or matched_spec or state.get("pending_doc"):
             target_doc = matched_doc or state.get("pending_doc")
@@ -867,7 +886,7 @@ async def handle_simulated_dialogue(
     # -----------------------------------------------------------------------
     # 5. Intent: Specific Booking Intent or Time Slot Selection
     # -----------------------------------------------------------------------
-    if has_explicit_booking or time_match:
+    if has_explicit_booking or extracted_slot:
         state["pending_action"] = "book"
 
         target_doc = state.get("pending_doc") or "Dr. Arvind Rao"

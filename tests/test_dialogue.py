@@ -138,5 +138,24 @@ def test_specialty_matching_dermatology_and_others():
         assert "confirmed" in reply5b.lower()
         assert "dr. priya sharma" in reply5b.lower()
 
+        # Case 6: Exact user scenario: "Yes book I want Thursday at 9:30 a.m."
+        # MUST NOT repeat the available slots! Must proceed to ask for phone number!
+        state5 = {
+            "pending_action": None,
+            "pending_doc": "Dr. Priya Sharma",
+            "pending_specialty": "Dermatology",
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": "Dr. Priya Sharma in Dermatology has the following slots available: Thursday at 09:30 AM, Thursday at 04:30 PM. Would you like to book one of these?",
+        }
+        reply6a = await handle_simulated_dialogue("Yes book I want Thursday at 9:30 a.m.", state5, dummy_callback)
+        assert "glad to book" in reply6a.lower()
+        assert "dr. priya sharma" in reply6a.lower()
+        assert "09:30 am" in reply6a.lower()
+        assert "thursday" in reply6a.lower()
+        assert "phone number" in reply6a.lower()
+        assert "would you like to book one of these" not in reply6a.lower()
+
     asyncio.run(run())
 
