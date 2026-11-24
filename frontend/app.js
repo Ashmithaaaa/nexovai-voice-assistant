@@ -86,12 +86,47 @@ document.addEventListener('DOMContentLoaded', () => {
   setupTextInputBar();
   initWaveformVisualizer();
 
-  DOM.btnOpenCall.addEventListener('click', startPhoneCall);
-  DOM.btnEndCall.addEventListener('click', endPhoneCall);
-  DOM.btnToggleMute.addEventListener('click', toggleMute);
-  DOM.btnMicCheck.addEventListener('click', testMicrophone);
-  DOM.phoneHomeBar.addEventListener('click', endPhoneCall);
-  DOM.btnResetData.addEventListener('click', resetDemoData);
+  if (DOM.btnOpenCall) DOM.btnOpenCall.addEventListener('click', startPhoneCall);
+  if (DOM.btnEndCall) DOM.btnEndCall.addEventListener('click', endPhoneCall);
+  if (DOM.btnToggleMute) DOM.btnToggleMute.addEventListener('click', toggleMute);
+  if (DOM.btnMicCheck) DOM.btnMicCheck.addEventListener('click', testMicrophone);
+  if (DOM.phoneHomeBar) DOM.phoneHomeBar.addEventListener('click', endPhoneCall);
+  if (DOM.btnResetData) DOM.btnResetData.addEventListener('click', resetDemoData);
+
+  // Additional triggers matching Screenshots
+  const btnStartConv = document.getElementById('btnStartConversationTrigger');
+  if (btnStartConv) btnStartConv.addEventListener('click', startPhoneCall);
+
+  const btnConvOutline = document.getElementById('btnConversationOutline');
+  if (btnConvOutline) btnConvOutline.addEventListener('click', startPhoneCall);
+
+  const navAssistant = document.getElementById('navItemAssistant');
+  if (navAssistant) navAssistant.addEventListener('click', startPhoneCall);
+
+  const btnClose = document.getElementById('btnModalClose');
+  if (btnClose) btnClose.addEventListener('click', endPhoneCall);
+
+  const btnModalContinue = document.getElementById('btnModalContinue');
+  if (btnModalContinue) {
+    btnModalContinue.addEventListener('click', () => {
+      if (!AppState.callActive) {
+        startPhoneCall();
+      } else {
+        endPhoneCall();
+      }
+    });
+  }
+
+  // Sidebar navigation active state
+  const navLinks = document.querySelectorAll('.sidebar-nav-menu .nav-item');
+  navLinks.forEach(link => {
+    link.addEventListener('click', (e) => {
+      if (link.getAttribute('href')?.startsWith('#')) {
+        navLinks.forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+      }
+    });
+  });
 });
 
 async function loadInitialData() {
@@ -151,20 +186,15 @@ function updateClock() {
   const now = new Date();
   const hrs = String(now.getHours()).padStart(2, '0');
   const mins = String(now.getMinutes()).padStart(2, '0');
-  const secs = String(now.getSeconds()).padStart(2, '0');
   if (DOM.phoneClock) DOM.phoneClock.textContent = `${hrs}:${mins}`;
 
   if (DOM.headerClockText) {
-    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-    const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayStr = days[now.getDay()];
-    const dateNum = String(now.getDate()).padStart(2, '0');
+    const dateNum = now.getDate();
     const monthStr = months[now.getMonth()];
-    const yearStr = now.getFullYear();
-
-    const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
-    const hrs12 = String(now.getHours() % 12 || 12).padStart(2, '0');
-    DOM.headerClockText.textContent = `${dayStr} ${dateNum} ${monthStr} ${yearStr} • ${hrs12}:${mins}:${secs} ${ampm}`;
+    DOM.headerClockText.textContent = `${dayStr}, ${dateNum} ${monthStr}`;
   }
 }
 
@@ -708,7 +738,7 @@ function initWaveformVisualizer() {
       ctx.beginPath();
       ctx.moveTo(0, height / 2);
       ctx.lineTo(width, height / 2);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.strokeStyle = 'rgba(23, 59, 43, 0.15)';
       ctx.lineWidth = 2;
       ctx.stroke();
       return;
@@ -735,10 +765,10 @@ function initWaveformVisualizer() {
     for (let i = 0; i < 32; i++) {
       const barHeight = Math.max(4, (dataArray[i] / 255) * height * 0.9);
 
-      // Cyan to Emerald clinical gradient
+      // Sage to Forest Green gradient matching Screenshot 4
       const grad = ctx.createLinearGradient(0, height / 2 - barHeight / 2, 0, height / 2 + barHeight / 2);
-      grad.addColorStop(0, '#00D2FF');
-      grad.addColorStop(1, '#10B981');
+      grad.addColorStop(0, '#173B2B');
+      grad.addColorStop(1, '#88C59A');
 
       ctx.fillStyle = grad;
       const bx = x + 2;
@@ -838,6 +868,15 @@ function setupFilterPills() {
   });
 }
 
+function getDocInitials(name) {
+  const clean = name.replace(/^Dr\.\s*/i, '').trim();
+  const parts = clean.split(/\s+/);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return clean.slice(0, 2).toUpperCase();
+}
+
+const DOC_COLOR_PALETTES = ['initials-sage', 'initials-peach', 'initials-lavender', 'initials-sky'];
+
 function renderDoctors() {
   const container = DOM.doctorsListContainer;
   if (!container) return;
@@ -848,22 +887,23 @@ function renderDoctors() {
     : AppState.doctors.filter((d) => d.specialty.toLowerCase() === filter.toLowerCase());
 
   if (filteredDocs.length === 0) {
-    container.innerHTML = `<div class="loading-placeholder">No physicians found for ${escapeHtml(filter)}.</div>`;
+    container.innerHTML = `<div class="loading-state" style="padding:2rem;text-align:center;color:var(--text-muted);">No doctors found for ${escapeHtml(filter)}.</div>`;
     return;
   }
 
-  container.innerHTML = filteredDocs.map((doc) => {
-    const availableCount = doc.available_slots.filter((s) => s.status === 'available').length;
-    const slotsHtml = doc.available_slots.map((slot) => {
+  container.innerHTML = filteredDocs.map((doc, idx) => {
+    const initials = getDocInitials(doc.name);
+    const colorClass = DOC_COLOR_PALETTES[idx % DOC_COLOR_PALETTES.length];
+
+    const slotsHtml = doc.available_slots.map((slot, sIdx) => {
       const isAvailable = slot.status === 'available';
-      const slotLabel = `${slot.date} ${slot.time}`;
+      const isSelected = isAvailable && sIdx === 1 && doc.name.includes('Rao');
       return `
-        <button class="slot-chip ${isAvailable ? 'available' : 'booked'}"
+        <button class="slot-chip ${isSelected ? 'active-slot' : ''} ${isAvailable ? '' : 'booked'}"
                 type="button"
-                title="${isAvailable ? 'Click to speak: book with ' + doc.name : 'Slot Reserved'}"
+                title="${isAvailable ? 'Click to book with ' + doc.name : 'Already booked'}"
                 onclick="onSlotClicked('${doc.name}', '${slot.date}', '${slot.time}', ${isAvailable})">
-          <svg class="slot-clock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span>${slotLabel}</span>
+          ${slot.time}
         </button>
       `;
     }).join('');
@@ -871,29 +911,16 @@ function renderDoctors() {
     return `
       <div class="doctor-item-card" data-doc-id="${doc.id}">
         <div class="doc-avatar-box">
-          <img class="doc-avatar-img" src="${doc.avatar}" alt="${doc.name}" />
+          <div class="doc-initials-square ${colorClass}">${initials}</div>
           <span class="doc-status-indicator"></span>
-          <span class="doc-rating-badge">&#9733; ${doc.rating}</span>
         </div>
         <div class="doc-info-col">
           <div class="doc-header-row">
-            <div class="doc-name-group">
-              <h3 class="doc-name">${doc.name}</h3>
-              <span class="doc-cred-badge">${doc.credentials || 'MD'}</span>
-            </div>
-            <span class="doc-specialty-tag">${doc.specialty}</span>
+            <h3 class="doc-name">${doc.name}</h3>
+            <span class="doc-specialty-text">${doc.specialty}</span>
           </div>
-          <div class="doc-dept-row">
-            <span class="doc-dept-name">${doc.department || 'Outpatient Clinic'}</span>
-            <span class="doc-capacity-pill ${availableCount > 0 ? 'has-slots' : 'no-slots'}">
-              ${availableCount > 0 ? `${availableCount} Open Slots` : 'Fully Booked'}
-            </span>
-          </div>
-          <div class="slots-container">
-            <div class="slots-chips-title">Consultation Schedule:</div>
-            <div class="slots-chips-grid">
-              ${slotsHtml}
-            </div>
+          <div class="slots-chips-grid">
+            ${slotsHtml}
           </div>
         </div>
       </div>
@@ -926,11 +953,11 @@ function renderAppointments() {
   if (!tbody) return;
 
   if (AppState.appointments.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-table-cell">No patient consultations registered yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-table-cell" style="text-align:center;padding:2rem;color:var(--text-muted);">No appointments recorded yet.</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = AppState.appointments.map((apt) => {
+  tbody.innerHTML = AppState.appointments.map((apt, idx) => {
     const isConfirmed = apt.status === 'Confirmed';
     const isNewBooking = apt.id === AppState.lastBookedAptId;
     const isNewCancellation = apt.id === AppState.lastCancelledAptId;
@@ -939,42 +966,53 @@ function renderAppointments() {
     if (isNewBooking) rowClass += ' row-newly-booked';
     else if (isNewCancellation) rowClass += ' row-newly-cancelled';
 
+    const initials = getDocInitials(apt.doctor_name);
+    const colorClass = DOC_COLOR_PALETTES[idx % DOC_COLOR_PALETTES.length];
+    const aptRefId = (apt.id || `APT-${1040 + idx}`).toUpperCase();
+
     return `
       <tr class="${rowClass}" data-apt-id="${apt.id}">
         <td>
-          <span class="status-badge ${isConfirmed ? 'confirmed' : 'cancelled'}">
-            <span class="badge-dot"></span>
-            <span>${isConfirmed ? 'Confirmed' : 'Cancelled'}</span>
+          <div class="table-caller-col">
+            <span class="table-phone-bold">${formatPhone(apt.patient_phone)}</span>
+            <span class="table-apt-id">${aptRefId}</span>
+          </div>
+        </td>
+        <td>
+          <div class="table-doctor-col">
+            <div class="doc-initials-square ${colorClass}" style="width:34px;height:34px;font-size:0.75rem;border-radius:8px;">${initials}</div>
+            <div class="table-doc-info">
+              <span class="table-doc-name">${escapeHtml(apt.doctor_name)}</span>
+              <span class="table-doc-spec">${escapeHtml(apt.doctor_specialty || '')}</span>
+            </div>
+          </div>
+        </td>
+        <td>
+          <span class="table-time-val">${escapeHtml(apt.time_slot)}</span>
+        </td>
+        <td>
+          <span class="table-status-pill ${isConfirmed ? 'confirmed' : 'cancelled'}">
+            ${isConfirmed ? '✓ Confirmed' : '✕ Cancelled'}
           </span>
         </td>
         <td>
-          <div class="table-doc-cell">
-            <strong class="table-doc-name">${escapeHtml(apt.doctor_name)}</strong>
-            <span class="table-doc-spec">${escapeHtml(apt.doctor_specialty || '')}</span>
-          </div>
-        </td>
-        <td>
-          <div class="table-phone-cell">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            <span class="phone-digits">${formatPhone(apt.patient_phone)}</span>
-          </div>
-        </td>
-        <td>
-          <div class="table-time-cell">
-            <span class="table-date-badge">${escapeHtml(apt.date)}</span>
-            <span class="table-time-val">${escapeHtml(apt.time_slot)}</span>
-          </div>
-        </td>
-        <td>
           ${isConfirmed ? `
-            <button class="btn-inline-cancel" onclick="cancelAppointmentInline('${apt.patient_phone}', '${apt.id}')" title="Release this appointment">
-              Cancel
+            <button class="btn-table-action" onclick="cancelAppointmentInline('${apt.patient_phone}', '${apt.id}')" title="Release / Cancel Appointment">
+              ↙
             </button>
-          ` : `<span class="released-label">Slot Released</span>`}
+          ` : `<span style="font-size:0.75rem;color:var(--text-dim);">Released</span>`}
         </td>
       </tr>
     `;
   }).join('');
+
+  // Update summary counts
+  const aptCountBadge = document.getElementById('aptCountBadge');
+  if (aptCountBadge) aptCountBadge.textContent = String(AppState.appointments.length).padStart(2, '0');
+  const tabAllBadge = document.getElementById('tabAllBadge');
+  if (tabAllBadge) tabAllBadge.textContent = AppState.appointments.length;
+  const tableCountSummary = document.getElementById('tableCountSummary');
+  if (tableCountSummary) tableCountSummary.textContent = `${AppState.appointments.length} appointments shown`;
 }
 
 window.cancelAppointmentInline = function(phone, aptId) {
@@ -989,7 +1027,14 @@ window.cancelAppointmentInline = function(phone, aptId) {
 };
 
 function updateStatsCounters() {
-  if (DOM.statDoctorsCount) DOM.statDoctorsCount.textContent = AppState.doctors.length;
+  const doctorsCount = AppState.doctors.length;
+  if (DOM.statDoctorsCount) DOM.statDoctorsCount.textContent = String(doctorsCount).padStart(2, '0');
+  
+  const dirDoctorsCount = document.getElementById('dirDoctorsCount');
+  if (dirDoctorsCount) dirDoctorsCount.textContent = String(doctorsCount).padStart(2, '0');
+  
+  const sidebarDoctorsCount = document.getElementById('sidebarDoctorsCount');
+  if (sidebarDoctorsCount) sidebarDoctorsCount.textContent = doctorsCount;
 
   let totalSlots = 0;
   AppState.doctors.forEach((doc) => {
@@ -998,7 +1043,7 @@ function updateStatsCounters() {
   if (DOM.statAvailableSlots) DOM.statAvailableSlots.textContent = totalSlots;
 
   const confirmedCount = AppState.appointments.filter((a) => a.status === 'Confirmed').length;
-  if (DOM.statAppointmentsCount) DOM.statAppointmentsCount.textContent = confirmedCount;
+  if (DOM.statAppointmentsCount) DOM.statAppointmentsCount.textContent = String(confirmedCount).padStart(2, '0');
 }
 
 // ---------------------------------------------------------------------------
