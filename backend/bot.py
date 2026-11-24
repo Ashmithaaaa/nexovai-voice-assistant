@@ -570,10 +570,10 @@ async def handle_simulated_dialogue(
     text_lower = user_text.lower()
     extracted_phone = clean_phone(user_text)
 
-    # 1. User confirmation of pending phone number
+    # 1. User confirmation of pending phone number (Strict confirmation rule)
     if state["pending_action"] and state["pending_phone"]:
-        is_yes = any(w in text_lower for w in ["yes", "correct", "right", "confirm", "yeah", "yep", "sure", "that's right", "fine", "ok"])
-        is_no = any(w in text_lower for w in ["no", "wrong", "incorrect", "nope", "change", "not right"])
+        is_yes = any(w in text_lower for w in ["yes", "correct", "right", "confirm", "yeah", "yep", "sure", "that's right", "fine", "ok", "proceed", "yup"])
+        is_no = any(w in text_lower for w in ["no", "wrong", "incorrect", "nope", "change", "not right", "cancel"])
 
         if is_yes:
             action = state["pending_action"]
@@ -615,34 +615,35 @@ async def handle_simulated_dialogue(
             state["pending_phone"] = None
             return "No problem at all. Could you please repeat your correct phone number?"
 
-    # 2. Check for Phone Number input when an action is already in progress
-    if state["pending_action"] and len(extracted_phone) >= 7:
+    # 2. Check for Phone Number input when an action is already in progress OR when digits are provided
+    if len(extracted_phone) >= 7:
+        state["pending_action"] = state["pending_action"] or "book"
         state["pending_phone"] = extracted_phone
         spaced_phone = " ".join(extracted_phone)
         action_name = "booking" if state["pending_action"] == "book" else "cancellation"
         return f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your {action_name}?"
 
     # 3. Intent: Cancellation
-    if any(w in text_lower for w in ["cancel", "delete", "drop", "cancel appointment"]):
+    if any(w in text_lower for w in ["cancel", "delete", "drop", "cancel appointment", "remove"]):
         state["pending_action"] = "cancel"
-        if len(extracted_phone) >= 7:
-            state["pending_phone"] = extracted_phone
-            spaced_phone = " ".join(extracted_phone)
-            return f"I can certainly help you cancel that. Just to confirm, your phone number is {spaced_phone}. Is that correct?"
         return "I can certainly help you cancel your appointment. What is the phone number you used when booking?"
 
-    # 4. Intent: Booking
-    if any(w in text_lower for w in ["book", "reserve", "schedule", "take the slot", "want that", "appointment", "could you please book"]):
+    # 4. Intent: Slot Selection or Booking
+    # Detects times like "10 am", "tomorrow at 10", "2:30 pm", "first slot", or words like "book", "schedule", "reserve"
+    time_match = re.search(r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?|\bfirst\b|\bsecond\b)", text_lower)
+    has_booking_keywords = any(w in text_lower for w in ["book", "reserve", "schedule", "take", "want", "appointment", "slot", "choose", "please", "yes", "yeah", "10", "11", "2", "3", "4"])
+    
+    if (time_match or has_booking_keywords) and not any(w in text_lower for w in ["available", "availability", "free"]):
         state["pending_action"] = "book"
-        
-        # Match doctor if mentioned
+
+        # Update Doctor if explicitly mentioned
         for doc in get_doctors_data():
             names = doc["name"].lower().replace("dr.", "").split()
             if any(n in text_lower for n in names):
                 state["pending_doc"] = doc["name"]
                 break
 
-        # Match date if mentioned
+        # Update Date
         if "tomorrow" in text_lower:
             state["pending_date"] = "Tomorrow"
         elif "thursday" in text_lower:
@@ -650,16 +651,25 @@ async def handle_simulated_dialogue(
         elif "friday" in text_lower:
             state["pending_date"] = "Friday"
 
-        # Match time if mentioned
-        time_match = re.search(r"(\d{1,2}(?::\d{2})?\s*(?:am|pm))", text_lower)
-        if time_match:
-            state["pending_slot"] = time_match.group(1).upper()
+        # Update Time Slot
+        if "10" in text_lower or "first" in text_lower:
+            state["pending_slot"] = "10:00 AM"
+        elif "2" in text_lower or "2:30" in text_lower or "second" in text_lower:
+            state["pending_slot"] = "02:30 PM"
+        elif "4" in text_lower:
+            state["pending_slot"] = "04:00 PM"
+        elif "11" in text_lower:
+            state["pending_slot"] = "11:15 AM"
+        elif "3" in text_lower:
+            state["pending_slot"] = "03:00 PM"
+        elif "1" in text_lower:
+            state["pending_slot"] = "01:00 PM"
+        elif "12" in text_lower:
+            state["pending_slot"] = "12:00 PM"
+        elif "5" in text_lower:
+            state["pending_slot"] = "05:00 PM"
 
-        if len(extracted_phone) >= 7:
-            state["pending_phone"] = extracted_phone
-            spaced_phone = " ".join(extracted_phone)
-            return f"I would be glad to book that with {state['pending_doc']} for {state['pending_date']} at {state['pending_slot']}. Just to confirm, your phone number is {spaced_phone}. Is that correct?"
-        return f"I would be happy to book that appointment with {state['pending_doc']} for {state['pending_date']} at {state['pending_slot']}. Could you please tell me your phone number?"
+        return f"I would be glad to book that slot with {state['pending_doc']} on {state['pending_date']} at {state['pending_slot']}. What is your phone number to confirm the booking?"
 
     # 5. Intent: Check Availability
     if any(w in text_lower for w in ["available", "availability", "slot", "free", "time", "doctor", "rao", "sharma", "mehta", "iyer", "anything tomorrow", "have anything"]):
@@ -687,4 +697,4 @@ async def handle_simulated_dialogue(
             return "Our clinic specialists, including Dr. Rao in Cardiology and Dr. Sharma in Dermatology, have open consultation slots for Tomorrow and Thursday. Which doctor would you like to see?"
 
     # 6. Default / Helpful Receptionist Response
-    return "I can assist you with checking doctor availability, booking an appointment, or cancelling one. Who would you like to see today?"
+    return f"I can help you check availability, book an appointment with {state.get('pending_doc', 'our doctors')}, or cancel an existing booking. How would you like to proceed?"

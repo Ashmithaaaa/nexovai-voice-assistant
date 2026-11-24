@@ -112,11 +112,26 @@ APPOINTMENTS: List[Dict[str, Any]] = [
 ]
 
 
+WORD_DIGITS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "oh": "0",
+}
+
 def clean_phone(phone_str: str) -> str:
-    """Normalize phone number to digits only."""
+    """Normalize phone number to digits only, supporting both spoken words and numeric strings."""
     if not phone_str:
         return ""
-    return "".join(c for c in str(phone_str) if c.isdigit())
+    import re
+    tokens = str(phone_str).lower().split()
+    converted = []
+    for token in tokens:
+        cleaned_t = re.sub(r"[^\w]", "", token)
+        if cleaned_t in WORD_DIGITS:
+            converted.append(WORD_DIGITS[cleaned_t])
+        else:
+            converted.append(token)
+    text = " ".join(converted)
+    return "".join(c for c in text if c.isdigit())
 
 
 def get_doctors_data() -> List[Dict[str, Any]]:

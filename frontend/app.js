@@ -476,12 +476,19 @@ function initSpeechRecognitionFallback() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) return;
 
+  if (AppState.recognition) {
+    try { AppState.recognition.stop(); } catch (e) {}
+  }
+
   AppState.recognition = new SpeechRecognition();
   AppState.recognition.continuous = true;
   AppState.recognition.interimResults = true;
   AppState.recognition.lang = 'en-US';
 
   AppState.recognition.onresult = (event) => {
+    // Ignore microphone feedback while receptionist is actively speaking
+    if (AppState.isAgentSpeaking) return;
+
     let finalTranscript = '';
     let interimTranscript = '';
 
@@ -495,6 +502,7 @@ function initSpeechRecognitionFallback() {
 
     if (finalTranscript.trim()) {
       addTranscriptMessage('user', finalTranscript.trim(), true);
+      updateCallStatus('thinking');
       // Forward user text to WebSocket backend
       if (AppState.ws && AppState.ws.readyState === WebSocket.OPEN) {
         AppState.ws.send(JSON.stringify({
@@ -504,11 +512,23 @@ function initSpeechRecognitionFallback() {
       }
     } else if (interimTranscript.trim()) {
       addTranscriptMessage('user', interimTranscript.trim(), false);
+      updateCallStatus('listening');
     }
   };
 
   AppState.recognition.onerror = (e) => {
     console.log('[SpeechRecognition] Event:', e.error);
+  };
+
+  AppState.recognition.onend = () => {
+    // Continuous listening: auto-restart recognition while call is active
+    if (AppState.callActive) {
+      setTimeout(() => {
+        try {
+          if (AppState.callActive) AppState.recognition.start();
+        } catch (err) {}
+      }, 150);
+    }
   };
 
   try {
