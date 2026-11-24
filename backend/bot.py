@@ -24,7 +24,6 @@ from loguru import logger
 
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
-from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
@@ -56,9 +55,6 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.serializers.base_serializer import FrameSerializer
-from pipecat.services.elevenlabs.stt import ElevenLabsSTTService
-from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
@@ -369,6 +365,12 @@ async def run_bot(
                     websocket=websocket,
                     params=transport_params,
                 )
+
+                # Lazy-load voice AI pipeline services on active call connection
+                from pipecat.audio.vad.silero import SileroVADAnalyzer
+                from pipecat.services.elevenlabs.stt import ElevenLabsSTTService
+                from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+                from pipecat.services.google.llm import GoogleLLMService
 
                 vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(sample_rate=16000))
 
