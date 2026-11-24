@@ -500,6 +500,7 @@ async def run_simulated_session(
         "pending_date": "Tomorrow",
         "pending_slot": "10:00 AM",
         "pending_phone": None,
+        "last_agent_prompt": GREETING,
     }
 
     # Initial greeting
@@ -569,13 +570,46 @@ async def handle_simulated_dialogue(
     event_callback: Callable[[Dict[str, Any]], Awaitable[None]],
 ) -> str:
     """Conversational state machine replicating strict doctor receptionist rules."""
-    text_lower = user_text.lower()
+    text_lower = user_text.lower().strip()
     extracted_phone = clean_phone(user_text)
 
+    # -----------------------------------------------------------------------
+    # 0. Check for "Repeat / Say Again / Pardon / What?"
+    # -----------------------------------------------------------------------
+    is_repeat = any(phrase in text_lower for phrase in [
+        "repeat", "say again", "say that again", "pardon", "what did you say",
+        "what was that", "come again", "didn't hear", "didn't catch",
+        "can you repeat", "could you repeat", "say it again", "once more"
+    ])
+    if is_repeat:
+        if state.get("pending_action") and state.get("pending_phone"):
+            spaced_phone = " ".join(state["pending_phone"])
+            action_name = "booking" if state["pending_action"] == "book" else "cancellation"
+            reply = f"Certainly! Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your {action_name}?"
+            state["last_agent_prompt"] = reply
+            return reply
+        elif state.get("pending_action") == "book":
+            reply = f"Certainly! I was asking for your phone number so I can book your slot with {state['pending_doc']} on {state['pending_date']} at {state['pending_slot']}. Could you please say your phone number?"
+            state["last_agent_prompt"] = reply
+            return reply
+        elif state.get("pending_action") == "cancel":
+            reply = "Certainly! I was asking for the phone number you used when booking, so I can find and cancel your appointment. Could you please say your phone number?"
+            state["last_agent_prompt"] = reply
+            return reply
+        else:
+            last = state.get("last_agent_prompt")
+            if last:
+                return f"Certainly! {last}"
+            reply = "Certainly! How can I help you today? You can check doctor availability, book an appointment, or cancel one."
+            state["last_agent_prompt"] = reply
+            return reply
+
+    # -----------------------------------------------------------------------
     # 1. User confirmation of pending phone number (Strict confirmation rule)
+    # -----------------------------------------------------------------------
     if state["pending_action"] and state["pending_phone"]:
-        is_yes = any(w in text_lower for w in ["yes", "correct", "right", "confirm", "yeah", "yep", "sure", "that's right", "fine", "ok", "proceed", "yup"])
-        is_no = any(w in text_lower for w in ["no", "wrong", "incorrect", "nope", "change", "not right", "cancel"])
+        is_yes = any(w in text_lower for w in ["yes", "correct", "right", "confirm", "yeah", "yep", "sure", "that's right", "fine", "ok", "proceed", "yup", "that is right", "it is correct"])
+        is_no = any(w in text_lower for w in ["no", "wrong", "incorrect", "nope", "change", "not right", "cancel", "that's wrong", "different number"])
 
         if is_yes:
             action = state["pending_action"]
@@ -599,7 +633,9 @@ async def handle_simulated_dialogue(
                     "action": "book_appointment",
                     "details": res,
                 })
-                return f"Thank you! Your appointment with {doc} on {date} at {slot} is officially confirmed under phone number {phone}. We look forward to seeing you!"
+                reply = f"Thank you! Your appointment with {doc} on {date} at {slot} is officially confirmed under phone number {phone}. We look forward to seeing you!"
+                state["last_agent_prompt"] = reply
+                return reply
 
             elif action == "cancel":
                 res = await cancel_appointment(patient_phone=phone)
@@ -609,33 +645,101 @@ async def handle_simulated_dialogue(
                     "details": res,
                 })
                 if res["status"] == "success":
-                    return f"Your appointment with {res['doctor']} on {res['date']} at {res['time_slot']} has been successfully cancelled. The slot has been released."
+                    reply = f"Your appointment with {res['doctor']} on {res['date']} at {res['time_slot']} has been successfully cancelled. The slot has been released."
                 else:
-                    return f"I checked our records, but couldn't find an active appointment under {phone}. Please verify the number and try again."
+                    reply = f"I checked our records, but couldn't find an active appointment under {phone}. Please verify the number and try again."
+                state["last_agent_prompt"] = reply
+                return reply
 
         elif is_no:
             state["pending_phone"] = None
-            return "No problem at all. Could you please repeat your correct phone number?"
+            reply = "No problem at all. Could you please say your correct phone number?"
+            state["last_agent_prompt"] = reply
+            return reply
 
+        else:
+            # If the user spoke new digits while waiting for confirmation
+            if len(extracted_phone) >= 7:
+                state["pending_phone"] = extracted_phone
+                spaced_phone = " ".join(extracted_phone)
+                action_name = "booking" if state["pending_action"] == "book" else "cancellation"
+                reply = f"Got it, I updated your number to {spaced_phone}. Is that correct for your {action_name}?"
+                state["last_agent_prompt"] = reply
+                return reply
+            else:
+                spaced_phone = " ".join(state["pending_phone"])
+                reply = f"I didn't quite catch that. Just to confirm, is {spaced_phone} your correct phone number? Please say 'yes' to confirm or 'no' to change it."
+                state["last_agent_prompt"] = reply
+                return reply
+
+    # -----------------------------------------------------------------------
     # 2. Check for Phone Number input when an action is already in progress OR when digits are provided
+    # -----------------------------------------------------------------------
     if len(extracted_phone) >= 7:
         state["pending_action"] = state["pending_action"] or "book"
         state["pending_phone"] = extracted_phone
         spaced_phone = " ".join(extracted_phone)
         action_name = "booking" if state["pending_action"] == "book" else "cancellation"
-        return f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your {action_name}?"
+        reply = f"Just to confirm, I have your phone number as {spaced_phone}. Is that correct for your {action_name}?"
+        state["last_agent_prompt"] = reply
+        return reply
 
+    # -----------------------------------------------------------------------
     # 3. Intent: Cancellation
-    if any(w in text_lower for w in ["cancel", "delete", "drop", "cancel appointment", "remove"]):
+    # -----------------------------------------------------------------------
+    if any(w in text_lower for w in ["cancel", "delete", "drop", "cancel appointment", "remove booking", "cancel my appointment"]):
         state["pending_action"] = "cancel"
-        return "I can certainly help you cancel your appointment. What is the phone number you used when booking?"
+        reply = "I can certainly help you cancel your appointment. What is the phone number you used when booking?"
+        state["last_agent_prompt"] = reply
+        return reply
 
-    # 4. Intent: Slot Selection or Booking
-    # Detects times like "10 am", "tomorrow at 10", "2:30 pm", "first slot", or words like "book", "schedule", "reserve"
-    time_match = re.search(r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?|\bfirst\b|\bsecond\b)", text_lower)
-    has_booking_keywords = any(w in text_lower for w in ["book", "reserve", "schedule", "take", "want", "appointment", "slot", "choose", "please", "yes", "yeah", "10", "11", "2", "3", "4"])
-    
-    if (time_match or has_booking_keywords) and not any(w in text_lower for w in ["available", "availability", "free"]):
+    # -----------------------------------------------------------------------
+    # 4. Intent: Check Doctor Availability
+    # -----------------------------------------------------------------------
+    is_availability_query = any(w in text_lower for w in [
+        "available", "availability", "slots", "free", "anything tomorrow",
+        "have anything", "when is", "what time", "openings"
+    ]) and not any(w in text_lower for w in ["book", "reserve", "confirm"])
+
+    if is_availability_query:
+        doc_name = None
+        for doc in get_doctors_data():
+            names = doc["name"].lower().replace("dr.", "").split()
+            if any(n in text_lower for n in names):
+                doc_name = doc["name"]
+                state["pending_doc"] = doc["name"]
+                break
+
+        res = check_doctor_availability(doctor_name=doc_name)
+        await event_callback({
+            "type": "tool_event",
+            "action": "check_doctor_availability",
+            "details": res,
+        })
+
+        if res["status"] == "success" and res["results"]:
+            first_doc = res["results"][0]
+            slots = first_doc["available_slots"][:3]
+            slots_str = ", ".join(slots)
+            reply = f"{first_doc['doctor']} in {first_doc['specialty']} has the following slots available: {slots_str}. Would you like to book one of these?"
+        else:
+            reply = "Our clinic specialists, including Dr. Rao in Cardiology and Dr. Sharma in Dermatology, have open consultation slots for Tomorrow and Thursday. Which doctor would you like to see?"
+        state["last_agent_prompt"] = reply
+        return reply
+
+    # -----------------------------------------------------------------------
+    # 5. Intent: Specific Booking Intent or Time Slot Selection
+    # -----------------------------------------------------------------------
+    explicit_booking_words = [
+        "book", "booking", "reserve", "take the", "schedule an appointment",
+        "appointment with", "want to book", "book dr", "book an appointment"
+    ]
+    has_explicit_booking = any(w in text_lower for w in explicit_booking_words)
+
+    # Detect specific time mentions: "10 am", "10:00", "2:30", "first slot", etc.
+    time_match = re.search(r"\b(10(?::00)?\s*(?:am)?|11(?::15)?\s*(?:am)?|12(?::00)?\s*(?:pm)?|1(?::00)?\s*(?:pm)?|2(?::30)?\s*(?:pm)?|3(?::00)?\s*(?:pm)?|4(?::00)?\s*(?:pm)?|5(?::00)?\s*(?:pm)?|first slot|second slot|third slot)\b", text_lower)
+
+    if has_explicit_booking or time_match:
         state["pending_action"] = "book"
 
         # Update Doctor if explicitly mentioned
@@ -656,11 +760,11 @@ async def handle_simulated_dialogue(
         # Update Time Slot
         if "10" in text_lower or "first" in text_lower:
             state["pending_slot"] = "10:00 AM"
-        elif "2" in text_lower or "2:30" in text_lower or "second" in text_lower:
+        elif "2:30" in text_lower or "2" in text_lower or "second" in text_lower:
             state["pending_slot"] = "02:30 PM"
         elif "4" in text_lower:
             state["pending_slot"] = "04:00 PM"
-        elif "11" in text_lower:
+        elif "11:15" in text_lower or "11" in text_lower:
             state["pending_slot"] = "11:15 AM"
         elif "3" in text_lower:
             state["pending_slot"] = "03:00 PM"
@@ -671,32 +775,34 @@ async def handle_simulated_dialogue(
         elif "5" in text_lower:
             state["pending_slot"] = "05:00 PM"
 
-        return f"I would be glad to book that slot with {state['pending_doc']} on {state['pending_date']} at {state['pending_slot']}. What is your phone number to confirm the booking?"
+        reply = f"I would be glad to book that slot with {state['pending_doc']} on {state['pending_date']} at {state['pending_slot']}. What is your phone number to confirm the booking?"
+        state["last_agent_prompt"] = reply
+        return reply
 
-    # 5. Intent: Check Availability
-    if any(w in text_lower for w in ["available", "availability", "slot", "free", "time", "doctor", "rao", "sharma", "mehta", "iyer", "anything tomorrow", "have anything"]):
-        doc_name = None
-        for doc in get_doctors_data():
-            names = doc["name"].lower().replace("dr.", "").split()
-            if any(n in text_lower for n in names):
-                doc_name = doc["name"]
-                state["pending_doc"] = doc["name"]
-                break
+    # -----------------------------------------------------------------------
+    # 6. If currently waiting for phone number and user said something without digits
+    # -----------------------------------------------------------------------
+    if state.get("pending_action") == "book" and not state.get("pending_phone"):
+        reply = f"I didn't quite catch your phone number. Could you please say your 10-digit phone number so I can book your appointment with {state['pending_doc']}?"
+        state["last_agent_prompt"] = reply
+        return reply
 
-        res = check_doctor_availability(doctor_name=doc_name)
-        await event_callback({
-            "type": "tool_event",
-            "action": "check_doctor_availability",
-            "details": res,
-        })
+    if state.get("pending_action") == "cancel" and not state.get("pending_phone"):
+        reply = "I didn't quite catch your phone number. Could you please say the 10-digit phone number you used when booking?"
+        state["last_agent_prompt"] = reply
+        return reply
 
-        if res["status"] == "success" and res["results"]:
-            first_doc = res["results"][0]
-            slots = first_doc["available_slots"][:3]
-            slots_str = ", ".join(slots)
-            return f"{first_doc['doctor']} in {first_doc['specialty']} has the following slots available: {slots_str}. Would you like to book one of these?"
-        else:
-            return "Our clinic specialists, including Dr. Rao in Cardiology and Dr. Sharma in Dermatology, have open consultation slots for Tomorrow and Thursday. Which doctor would you like to see?"
+    # -----------------------------------------------------------------------
+    # 7. Friendly Greetings
+    # -----------------------------------------------------------------------
+    if any(w in text_lower for w in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening"]):
+        reply = "Hello! Welcome to Aura Health Clinic. I can check doctor availability, book an appointment, or cancel one for you. How may I help you today?"
+        state["last_agent_prompt"] = reply
+        return reply
 
-    # 6. Default / Helpful Receptionist Response
-    return f"I can help you check availability, book an appointment with {state.get('pending_doc', 'our doctors')}, or cancel an existing booking. How would you like to proceed?"
+    # -----------------------------------------------------------------------
+    # 8. Unclear / Unrecognized Speech Fallback
+    # -----------------------------------------------------------------------
+    reply = "I'm sorry, I didn't quite catch that. Could you please repeat that? You can ask for doctor availability, book an appointment, or cancel one."
+    state["last_agent_prompt"] = reply
+    return reply

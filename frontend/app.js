@@ -516,14 +516,21 @@ function initSpeechRecognitionFallback() {
       }
     }
 
-    if (finalTranscript.trim()) {
-      addTranscriptMessage('user', finalTranscript.trim(), true);
+    const cleaned = finalTranscript.trim();
+    if (cleaned) {
+      // Filter out isolated mic clicks, breath noise, or short fillers
+      const lower = cleaned.toLowerCase();
+      if (cleaned.length < 2 || ['uh', 'um', 'ah', 'er', 'hmm', 'oh'].includes(lower)) {
+        return;
+      }
+
+      addTranscriptMessage('user', cleaned, true);
       updateCallStatus('thinking');
       // Forward user text to WebSocket backend
       if (AppState.ws && AppState.ws.readyState === WebSocket.OPEN) {
         AppState.ws.send(JSON.stringify({
           type: 'user_transcript',
-          text: finalTranscript.trim(),
+          text: cleaned,
         }));
       }
     } else if (interimTranscript.trim()) {
@@ -576,7 +583,10 @@ function speakAgentFallback(text) {
   };
   utterance.onend = () => {
     updateCallStatus('listening');
-    AppState.isAgentSpeaking = false;
+    // 450ms acoustic cooldown so the microphone doesn't pick up speaker echo
+    setTimeout(() => {
+      AppState.isAgentSpeaking = false;
+    }, 450);
   };
   utterance.onerror = () => {
     AppState.isAgentSpeaking = false;
