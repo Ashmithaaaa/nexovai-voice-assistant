@@ -93,6 +93,20 @@ document.addEventListener('DOMContentLoaded', () => {
   if (DOM.phoneHomeBar) DOM.phoneHomeBar.addEventListener('click', endPhoneCall);
   if (DOM.btnResetData) DOM.btnResetData.addEventListener('click', resetDemoData);
 
+  // Click-to-Interrupt (Barge-In) on Waveform Canvas
+  if (DOM.waveformCanvas) {
+    DOM.waveformCanvas.style.cursor = 'pointer';
+    DOM.waveformCanvas.title = 'Click to interrupt Aura while speaking';
+    DOM.waveformCanvas.addEventListener('click', () => {
+      if (AppState.isAgentSpeaking) {
+        console.log('[BargeIn] User clicked waveform to interrupt.');
+        stopAgentSpeech();
+        updateCallStatus('listening');
+        showToast('Interrupted • Aura is listening', 'info');
+      }
+    });
+  }
+
   // Additional triggers matching Screenshots
   const btnStartConv = document.getElementById('btnStartConversationTrigger');
   if (btnStartConv) btnStartConv.addEventListener('click', startPhoneCall);
@@ -355,6 +369,8 @@ async function startPhoneCall() {
   if (DOM.phoneTicketCard) {
     DOM.phoneTicketCard.style.display = 'none';
   }
+  stopAgentSpeech();
+  turnSpeechBuffer = '';
 
   // Play synthesized dual-tone telephone ringing sound
   playTelephoneRingSound();
@@ -405,9 +421,7 @@ function endPhoneCall() {
   if (AppState.recognition) {
     try { AppState.recognition.stop(); } catch (e) {}
   }
-  if (AppState.speechSynth) {
-    AppState.speechSynth.cancel();
-  }
+  stopAgentSpeech();
 
   updateCallStatus('ended');
 
@@ -536,19 +550,43 @@ function testMicrophone() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Speech Recognition & Synthesis Fallbacks (With Turn Buffer & Barge-In)
+// 5. Speech Recognition & Synthesis Engine (With Robust Anti-Echo & Natural Pacing)
 // ---------------------------------------------------------------------------
 let turnSpeechBuffer = '';
 let turnSilenceTimer = null;
-const TURN_SILENCE_DELAY_MS = 1300; // 1.3s comfortable pause window for natural human speech
+const TURN_SILENCE_DELAY_MS = 1200; // 1.2s comfortable pause window for natural human speech
 
 function commitUserTurn() {
   if (turnSilenceTimer) {
     clearTimeout(turnSilenceTimer);
     turnSilenceTimer = null;
   }
-  const fullUtterance = turnSpeechBuffer.trim();
+  const rawUtterance = turnSpeechBuffer.trim();
   turnSpeechBuffer = '';
+
+  if (!rawUtterance || rawUtterance.length < 2) return;
+
+  // Filter out any leaked bot phrases from user speech
+  let cleaned = rawUtterance;
+  const echoPatterns = [
+    /thank you for calling/gi,
+    /aura health clinic/gi,
+    /i'm your ai receptionist/gi,
+    /how can i help you today/gi,
+    /you can check doctor availability/gi,
+    /you can check doctor one/gi,
+    /you can check doctor/gi,
+    /check doctor availability/gi,
+    /book an appointment or cancel one/gi,
+    /or cancel one/gi,
+    /cancel one/gi
+  ];
+  for (const pat of echoPatterns) {
+    cleaned = cleaned.replace(pat, ' ');
+  }
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  const fullUtterance = cleaned || rawUtterance;
 
   if (!fullUtterance || fullUtterance.length < 2) return;
 
@@ -566,6 +604,24 @@ function commitUserTurn() {
       text: fullUtterance,
     }));
   }
+}
+
+function stopAgentSpeech() {
+  AppState.isAgentSpeaking = false;
+  AppState.isPlayingRemoteAudio = false;
+
+  if (window._synthKeepAliveTimer) {
+    clearInterval(window._synthKeepAliveTimer);
+    window._synthKeepAliveTimer = null;
+  }
+
+  if (window.speechSynthesis) {
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+    } catch (e) {}
+  }
+  window._activeUtterance = null;
 }
 
 function initSpeechRecognitionFallback() {
@@ -595,15 +651,21 @@ function initSpeechRecognitionFallback() {
 
     const cleanedFinal = finalChunk.trim();
     const cleanedInterim = interimChunk.trim();
+    const heardText = (cleanedFinal || cleanedInterim).toLowerCase();
+    if (!heardText) return;
 
-    // 1. Barge-In: If receptionist is speaking and caller starts talking, stop receptionist immediately
+    // 1. Acoustic Feedback Protection while Receptionist is Speaking
+    // On laptops without headphones, the microphone hears the bot's own speaker output.
+    // If the receptionist is speaking, discard echoed speaker audio so the bot is NOT cut off mid-sentence!
     if (AppState.isAgentSpeaking) {
-      if (cleanedFinal.length > 1 || cleanedInterim.length > 1) {
-        if (AppState.speechSynth) AppState.speechSynth.cancel();
-        AppState.isAgentSpeaking = false;
-        AppState.isPlayingRemoteAudio = false;
+      // Allow explicit voice barge-in if the caller says an unmistakable interruption keyword
+      const isExplicitBargeIn = /\b(stop|wait|hold on|pause|excuse me|no wait|shut up)\b/i.test(heardText);
+      if (isExplicitBargeIn) {
+        console.log('[BargeIn] User interrupted receptionist with command:', heardText);
+        stopAgentSpeech();
         updateCallStatus('listening');
       } else {
+        // Echo suppression: Ignore laptop speaker reflection so bot finishes speaking naturally!
         return;
       }
     }
@@ -619,18 +681,21 @@ function initSpeechRecognitionFallback() {
       addTranscriptMessage('user', currentLiveText, false);
       updateCallStatus('listening');
 
-      // 4. Reset silence timer: wait 1.3 seconds of silence before committing turn to Aura
+      // 4. Reset silence timer: wait 1.2 seconds of silence before committing turn to Aura
       if (turnSilenceTimer) clearTimeout(turnSilenceTimer);
       turnSilenceTimer = setTimeout(commitUserTurn, TURN_SILENCE_DELAY_MS);
     }
   };
 
   AppState.recognition.onerror = (e) => {
-    console.log('[SpeechRecognition] Event:', e.error);
+    // Ignore routine no-speech events silently
+    if (e.error !== 'no-speech') {
+      console.log('[SpeechRecognition] Event:', e.error);
+    }
   };
 
   AppState.recognition.onend = () => {
-    // Continuous listening: auto-restart recognition while call is active
+    // Auto-restart recognition while call is active so listening never drops
     if (AppState.callActive) {
       setTimeout(() => {
         try {
@@ -650,8 +715,21 @@ function speakAgentFallback(text) {
   if (AppState.audioCtx && AppState.audioCtx.state === 'running' && AppState.isPlayingRemoteAudio) {
     return;
   }
-  AppState.speechSynth.cancel();
+
+  // Cancel any prior speech and clear user turn buffer so speaker echo isn't sent
+  stopAgentSpeech();
+  if (turnSilenceTimer) {
+    clearTimeout(turnSilenceTimer);
+    turnSilenceTimer = null;
+  }
+  turnSpeechBuffer = '';
+
   const utterance = new SpeechSynthesisUtterance(text);
+  window._activeUtterance = utterance; // Prevent V8 garbage-collecting utterance mid-speech!
+  AppState.currentAgentText = text.toLowerCase();
+  AppState.isAgentSpeaking = true;
+  updateCallStatus('speaking');
+
   utterance.rate = 1.0;
   utterance.pitch = 1.0;
 
@@ -667,18 +745,59 @@ function speakAgentFallback(text) {
     updateCallStatus('speaking');
     AppState.isAgentSpeaking = true;
   };
+
   utterance.onend = () => {
-    updateCallStatus('listening');
-    // 450ms acoustic cooldown so the microphone doesn't pick up speaker echo
+    if (window._synthKeepAliveTimer) {
+      clearInterval(window._synthKeepAliveTimer);
+      window._synthKeepAliveTimer = null;
+    }
+    window._activeUtterance = null;
+
+    // Discard any residual audio captured while receptionist was speaking
+    turnSpeechBuffer = '';
+    if (turnSilenceTimer) {
+      clearTimeout(turnSilenceTimer);
+      turnSilenceTimer = null;
+    }
+
+    // 450ms acoustic grace period so room reverb/echo doesn't get picked up as user speech
     setTimeout(() => {
       AppState.isAgentSpeaking = false;
+      turnSpeechBuffer = '';
+      if (AppState.callActive) {
+        updateCallStatus('listening');
+      }
     }, 450);
   };
-  utterance.onerror = () => {
+
+  utterance.onerror = (e) => {
+    console.warn('[SpeechSynthesis] Error:', e);
     AppState.isAgentSpeaking = false;
+    window._activeUtterance = null;
+    if (AppState.callActive) {
+      updateCallStatus('listening');
+    }
   };
 
-  AppState.speechSynth.speak(utterance);
+  // Chrome Bug Workaround: keepalive ping prevents Chrome from pausing synthesis on longer utterances
+  if (window._synthKeepAliveTimer) clearInterval(window._synthKeepAliveTimer);
+  window._synthKeepAliveTimer = setInterval(() => {
+    if (AppState.isAgentSpeaking && window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.pause();
+      window.speechSynthesis.resume();
+    } else {
+      clearInterval(window._synthKeepAliveTimer);
+      window._synthKeepAliveTimer = null;
+    }
+  }, 4000);
+
+  // Resume before speaking in case Chrome had entered a paused state
+  try {
+    window.speechSynthesis.resume();
+    window.speechSynthesis.speak(utterance);
+  } catch (err) {
+    console.warn('[SpeechSynthesis] speak failed:', err);
+  }
 }
 
 function playRawAudioChunk(arrayBuffer) {

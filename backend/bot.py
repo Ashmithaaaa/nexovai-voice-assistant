@@ -640,7 +640,6 @@ async def run_simulated_session(
                         "role": "agent",
                         "text": GREETING,
                     })
-                    await event_callback({"type": "state", "status": "listening"})
                     continue
 
                 elif msg_type == "call_ended":
@@ -677,7 +676,6 @@ async def run_simulated_session(
                         "role": "agent",
                         "text": reply_text,
                     })
-                    await event_callback({"type": "state", "status": "listening"})
 
             elif "bytes" in data and data["bytes"]:
                 # 16kHz PCM audio stream from user's microphone
@@ -697,9 +695,31 @@ async def handle_simulated_dialogue(
     extracted_phone = clean_phone(user_text)
 
     # -----------------------------------------------------------------------
+    # Early Cleaning: Strip known bot greeting echo phrases from user speech
+    # -----------------------------------------------------------------------
+    echo_phrases = [
+        "thank you for calling aura health clinic",
+        "thank you for calling",
+        "aura health clinic",
+        "i'm your ai receptionist",
+        "how can i help you today",
+        "you can check doctor availability",
+        "you can check doctor one",
+        "you can check doctor",
+        "check doctor availability",
+        "book an appointment or cancel one",
+        "or cancel one",
+        "cancel one",
+    ]
+    cleaned_speech = text_lower
+    for ep in echo_phrases:
+        cleaned_speech = cleaned_speech.replace(ep, " ")
+    cleaned_speech = " ".join(cleaned_speech.split())
+
+    # -----------------------------------------------------------------------
     # Early Extraction: Doctor, Specialty, Date, and Time Slot Mentions
     # -----------------------------------------------------------------------
-    matched_doc, matched_spec = extract_doctor_and_specialty(text_lower)
+    matched_doc, matched_spec = extract_doctor_and_specialty(cleaned_speech or text_lower)
     if matched_doc:
         state["pending_doc"] = matched_doc
         state["pending_specialty"] = matched_spec
@@ -777,8 +797,18 @@ async def handle_simulated_dialogue(
 
     # -----------------------------------------------------------------------
     # 0c. Polite Gratitude & Farewell Intent ("thank you", "thanks", "bye")
+    # ONLY if there is no other clinical intent (no booking, no doctor, no specialty, no phone digits)!
     # -----------------------------------------------------------------------
-    if any(w in text_lower for w in ["thank you", "thanks", "thank u", "bye", "goodbye", "have a good day", "see you"]):
+    has_clinical_intent = bool(
+        matched_doc or matched_spec or extracted_slot or len(extracted_phone) >= 7
+        or any(w in cleaned_speech for w in [
+            "book", "appointment", "doctor", "specialist", "cancel", "slot", "slots",
+            "available", "availability", "consult", "consultation", "dermatology",
+            "cardiology", "orthopedics", "general"
+        ])
+    )
+    farewell_words = ["thank you", "thanks", "thank u", "bye", "goodbye", "have a good day", "see you"]
+    if not has_clinical_intent and any(fw in cleaned_speech for fw in farewell_words):
         reply = "You're very welcome! Thank you for calling Aura Health Clinic. Take care and have a wonderful day!"
         state["last_agent_prompt"] = reply
         return reply

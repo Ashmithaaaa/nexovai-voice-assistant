@@ -190,7 +190,7 @@ def test_specialty_matching_dermatology_and_others():
         assert "cleared" in reply8.lower()
         assert state7["pending_action"] is None
 
-        # Case 9: Gratitude & Farewell
+        # Case 9: Gratitude & Farewell (only when standalone)
         state8 = {
             "pending_action": None,
             "pending_doc": None,
@@ -202,6 +202,23 @@ def test_specialty_matching_dermatology_and_others():
         }
         reply9 = await handle_simulated_dialogue("Thank you so much, bye!", state8, dummy_callback)
         assert "welcome" in reply9.lower()
+
+        # Case 10: Echoed greeting prefix with actual booking query
+        # "thank you for calling you can check doctor one I want to book an appointment with a dermatology"
+        state9 = {
+            "pending_action": None,
+            "pending_doc": None,
+            "pending_specialty": None,
+            "pending_date": "Tomorrow",
+            "pending_slot": None,
+            "pending_phone": None,
+            "last_agent_prompt": GREETING,
+        }
+        reply10 = await handle_simulated_dialogue("thank you for calling you can check doctor one I want to book an appointment with a dermatology", state9, dummy_callback)
+        assert "dr. priya sharma" in reply10.lower()
+        assert "dermatology" in reply10.lower()
+        assert "slots available" in reply10.lower()
+        assert "welcome" not in reply10.lower()
 
     asyncio.run(run())
 
