@@ -35,7 +35,9 @@ DOCTORS = [
     {
         "id": "doc-1",
         "name": "Dr. Arvind Rao",
+        "credentials": "MD, FACC",
         "specialty": "Cardiology",
+        "department": "Cardiovascular Medicine",
         "rating": 4.9,
         "avatar": "https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=150&auto=format&fit=crop&q=80",
         "available_slots": [
@@ -48,7 +50,9 @@ DOCTORS = [
     {
         "id": "doc-2",
         "name": "Dr. Priya Sharma",
+        "credentials": "MD, FAAD",
         "specialty": "Dermatology",
+        "department": "Cutaneous Medicine & Aesthetics",
         "rating": 4.8,
         "avatar": "https://images.unsplash.com/photo-1594824813637-44f0c458316f?w=150&auto=format&fit=crop&q=80",
         "available_slots": [
@@ -61,7 +65,9 @@ DOCTORS = [
     {
         "id": "doc-3",
         "name": "Dr. Rohan Mehta",
+        "credentials": "MS, MCh",
         "specialty": "Orthopedics",
+        "department": "Joint Reconstruction & Spine",
         "rating": 4.9,
         "avatar": "https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150&auto=format&fit=crop&q=80",
         "available_slots": [
@@ -73,7 +79,9 @@ DOCTORS = [
     {
         "id": "doc-4",
         "name": "Dr. Ananya Iyer",
+        "credentials": "MD, FACP",
         "specialty": "General Medicine",
+        "department": "Comprehensive Internal Medicine",
         "rating": 4.7,
         "avatar": "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80",
         "available_slots": [

@@ -36,6 +36,7 @@ const AppState = {
 const DOM = {
   btnOpenCall: document.getElementById('btnOpenCall'),
   btnResetData: document.getElementById('btnResetData'),
+  headerClockText: document.getElementById('headerClockText'),
   phoneModalBackdrop: document.getElementById('phoneModalBackdrop'),
   phoneDevice: document.getElementById('phoneDevice'),
   callStateBadge: document.getElementById('callStateBadge'),
@@ -44,6 +45,7 @@ const DOM = {
   phoneTranscript: document.getElementById('phoneTranscript'),
   phoneTicketCard: document.getElementById('phoneTicketCard'),
   ticketTitle: document.getElementById('ticketTitle'),
+  ticketRefCode: document.getElementById('ticketRefCode'),
   ticketDoctor: document.getElementById('ticketDoctor'),
   ticketSlot: document.getElementById('ticketSlot'),
   ticketPhone: document.getElementById('ticketPhone'),
@@ -73,7 +75,7 @@ const DOM = {
 // ---------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
   updateClock();
-  setInterval(updateClock, 10000);
+  setInterval(updateClock, 1000);
 
   // Load clinic data immediately via REST
   loadInitialData();
@@ -149,7 +151,21 @@ function updateClock() {
   const now = new Date();
   const hrs = String(now.getHours()).padStart(2, '0');
   const mins = String(now.getMinutes()).padStart(2, '0');
+  const secs = String(now.getSeconds()).padStart(2, '0');
   if (DOM.phoneClock) DOM.phoneClock.textContent = `${hrs}:${mins}`;
+
+  if (DOM.headerClockText) {
+    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+    const dayStr = days[now.getDay()];
+    const dateNum = String(now.getDate()).padStart(2, '0');
+    const monthStr = months[now.getMonth()];
+    const yearStr = now.getFullYear();
+
+    const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
+    const hrs12 = String(now.getHours() % 12 || 12).padStart(2, '0');
+    DOM.headerClockText.textContent = `${dayStr} ${dateNum} ${monthStr} ${yearStr} • ${hrs12}:${mins}:${secs} ${ampm}`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -709,13 +725,25 @@ function initWaveformVisualizer() {
     for (let i = 0; i < 32; i++) {
       const barHeight = Math.max(4, (dataArray[i] / 255) * height * 0.9);
 
-      // Cyan to Emerald gradient
+      // Cyan to Emerald clinical gradient
       const grad = ctx.createLinearGradient(0, height / 2 - barHeight / 2, 0, height / 2 + barHeight / 2);
-      grad.addColorStop(0, '#0EA5E9');
+      grad.addColorStop(0, '#00D2FF');
       grad.addColorStop(1, '#10B981');
 
       ctx.fillStyle = grad;
-      ctx.fillRect(x, (height - barHeight) / 2, barWidth - 3, barHeight);
+      const bx = x + 2;
+      const by = (height - barHeight) / 2;
+      const bw = barWidth - 4;
+      const bh = barHeight;
+      const radius = Math.min(bw / 2, bh / 2);
+
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(bx, by, bw, bh, radius);
+      } else {
+        ctx.rect(bx, by, bw, bh);
+      }
+      ctx.fill();
 
       x += barWidth;
     }
@@ -776,6 +804,9 @@ function showPhoneTicket(title, doctor, slot, phone) {
   DOM.ticketDoctor.textContent = doctor;
   DOM.ticketSlot.textContent = slot;
   DOM.ticketPhone.textContent = phone;
+  if (DOM.ticketRefCode) {
+    DOM.ticketRefCode.textContent = `REF #AC-${Math.floor(1000 + Math.random() * 9000)}`;
+  }
   DOM.phoneTicketCard.style.display = 'block';
 
   // Auto-scroll inside phone
@@ -807,20 +838,23 @@ function renderDoctors() {
     : AppState.doctors.filter((d) => d.specialty.toLowerCase() === filter.toLowerCase());
 
   if (filteredDocs.length === 0) {
-    container.innerHTML = `<div class="loading-placeholder">No doctors found for ${filter}.</div>`;
+    container.innerHTML = `<div class="loading-placeholder">No physicians found for ${escapeHtml(filter)}.</div>`;
     return;
   }
 
   container.innerHTML = filteredDocs.map((doc) => {
+    const availableCount = doc.available_slots.filter((s) => s.status === 'available').length;
     const slotsHtml = doc.available_slots.map((slot) => {
       const isAvailable = slot.status === 'available';
       const slotLabel = `${slot.date} ${slot.time}`;
       return `
-        <span class="slot-chip ${isAvailable ? 'available' : 'booked'}"
-              title="${isAvailable ? 'Click to preview spoken prompt' : 'Already Booked'}"
-              onclick="onSlotClicked('${doc.name}', '${slot.date}', '${slot.time}', ${isAvailable})">
-          ${slotLabel}
-        </span>
+        <button class="slot-chip ${isAvailable ? 'available' : 'booked'}"
+                type="button"
+                title="${isAvailable ? 'Click to speak: book with ' + doc.name : 'Slot Reserved'}"
+                onclick="onSlotClicked('${doc.name}', '${slot.date}', '${slot.time}', ${isAvailable})">
+          <svg class="slot-clock-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>${slotLabel}</span>
+        </button>
       `;
     }).join('');
 
@@ -828,16 +862,28 @@ function renderDoctors() {
       <div class="doctor-item-card" data-doc-id="${doc.id}">
         <div class="doc-avatar-box">
           <img class="doc-avatar-img" src="${doc.avatar}" alt="${doc.name}" />
+          <span class="doc-status-indicator"></span>
           <span class="doc-rating-badge">&#9733; ${doc.rating}</span>
         </div>
         <div class="doc-info-col">
           <div class="doc-header-row">
-            <h3 class="doc-name">${doc.name}</h3>
+            <div class="doc-name-group">
+              <h3 class="doc-name">${doc.name}</h3>
+              <span class="doc-cred-badge">${doc.credentials || 'MD'}</span>
+            </div>
             <span class="doc-specialty-tag">${doc.specialty}</span>
           </div>
-          <div class="slots-chips-title">Available Slots:</div>
-          <div class="slots-chips-grid">
-            ${slotsHtml}
+          <div class="doc-dept-row">
+            <span class="doc-dept-name">${doc.department || 'Outpatient Clinic'}</span>
+            <span class="doc-capacity-pill ${availableCount > 0 ? 'has-slots' : 'no-slots'}">
+              ${availableCount > 0 ? `${availableCount} Open Slots` : 'Fully Booked'}
+            </span>
+          </div>
+          <div class="slots-container">
+            <div class="slots-chips-title">Consultation Schedule:</div>
+            <div class="slots-chips-grid">
+              ${slotsHtml}
+            </div>
           </div>
         </div>
       </div>
@@ -870,7 +916,7 @@ function renderAppointments() {
   if (!tbody) return;
 
   if (AppState.appointments.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color: var(--text-muted); padding: 2rem;">No appointments booked yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-table-cell">No patient consultations registered yet.</td></tr>`;
     return;
   }
 
@@ -879,33 +925,42 @@ function renderAppointments() {
     const isNewBooking = apt.id === AppState.lastBookedAptId;
     const isNewCancellation = apt.id === AppState.lastCancelledAptId;
 
-    let rowClass = '';
-    if (isNewBooking) rowClass = 'row-newly-booked';
-    else if (isNewCancellation) rowClass = 'row-newly-cancelled';
+    let rowClass = 'apt-table-row';
+    if (isNewBooking) rowClass += ' row-newly-booked';
+    else if (isNewCancellation) rowClass += ' row-newly-cancelled';
 
     return `
       <tr class="${rowClass}" data-apt-id="${apt.id}">
         <td>
           <span class="status-badge ${isConfirmed ? 'confirmed' : 'cancelled'}">
-            ${isConfirmed ? '&#9679; Confirmed' : '&#9679; Cancelled'}
+            <span class="badge-dot"></span>
+            <span>${isConfirmed ? 'Confirmed' : 'Cancelled'}</span>
           </span>
         </td>
         <td>
-          <strong style="color: #F8FAFC;">${apt.doctor_name}</strong>
-          <div style="font-size: 0.75rem; color: var(--text-muted);">${apt.doctor_specialty || ''}</div>
+          <div class="table-doc-cell">
+            <strong class="table-doc-name">${escapeHtml(apt.doctor_name)}</strong>
+            <span class="table-doc-spec">${escapeHtml(apt.doctor_specialty || '')}</span>
+          </div>
         </td>
         <td>
-          <span class="phone-digits">${formatPhone(apt.patient_phone)}</span>
+          <div class="table-phone-cell">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span class="phone-digits">${formatPhone(apt.patient_phone)}</span>
+          </div>
         </td>
         <td>
-          <span style="color: #BAE6FD; font-weight: 600;">${apt.date}</span> at ${apt.time_slot}
+          <div class="table-time-cell">
+            <span class="table-date-badge">${escapeHtml(apt.date)}</span>
+            <span class="table-time-val">${escapeHtml(apt.time_slot)}</span>
+          </div>
         </td>
         <td>
           ${isConfirmed ? `
-            <button class="btn-inline-cancel" onclick="cancelAppointmentInline('${apt.patient_phone}', '${apt.id}')" title="Cancel this appointment">
+            <button class="btn-inline-cancel" onclick="cancelAppointmentInline('${apt.patient_phone}', '${apt.id}')" title="Release this appointment">
               Cancel
             </button>
-          ` : `<span style="font-size: 0.75rem; color: var(--text-muted);">Released</span>`}
+          ` : `<span class="released-label">Slot Released</span>`}
         </td>
       </tr>
     `;
